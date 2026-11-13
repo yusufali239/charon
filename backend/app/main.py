@@ -91,6 +91,21 @@ async def update_settings(req: SettingsRequest):
     return {"ok": True, "providers": settings.provider_status(), "economy_mode": settings.economy_mode}
 
 
+@app.delete("/api/settings/key/{provider}")
+async def delete_api_key(provider: str):
+    ok = settings.delete_key(provider)
+    await sim.broadcast({
+        "type": "config",
+        "economy_mode": settings.economy_mode,
+        "providers": settings.provider_status(),
+    })
+    return {
+        "ok": ok,
+        "providers": settings.provider_status(),
+        "economy_mode": settings.economy_mode,
+    }
+
+
 @app.post("/api/agents/{agent_id}/model")
 async def update_agent_model(agent_id: str, req: AgentModelUpdate):
     if agent_id not in AGENTS:

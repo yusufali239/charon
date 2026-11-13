@@ -23,13 +23,72 @@ const CHAR_GEO = {
 
 const DESK_BY_ID = Object.fromEntries(DESKS.map((d) => [d.id, d]));
 
+const STATE_META = {
+  IDLE: { label: "IDLE", dot: "#94a3b8", badgeBg: "rgba(148,163,184,0.14)", badgeColor: "#cbd5e1", pulse: false, dots: false },
+  THINKING: { label: "THINK", dot: "#38bdf8", badgeBg: "rgba(56,189,248,0.18)", badgeColor: "#7dd3fc", pulse: true, dots: true },
+  WORKING: { label: "WORK", dot: "#22c55e", badgeBg: "rgba(34,197,94,0.18)", badgeColor: "#86efac", pulse: true, dots: true },
+  COLLABORATING: { label: "COLLAB", dot: "#a855f7", badgeBg: "rgba(168,85,247,0.2)", badgeColor: "#d8b4fe", pulse: true, dots: true },
+  REVIEWING: { label: "REVIEW", dot: "#eab308", badgeBg: "rgba(234,179,8,0.2)", badgeColor: "#fde047", pulse: true, dots: true },
+  BLOCKED: { label: "BLOCKED", dot: "#f97316", badgeBg: "rgba(249,115,22,0.25)", badgeColor: "#fdba74", pulse: true, dots: false },
+  ERROR: { label: "ERROR", dot: "#ef4444", badgeBg: "rgba(239,68,68,0.28)", badgeColor: "#fca5a5", pulse: true, dots: false },
+  COMPLETED: { label: "DONE", dot: "#10b981", badgeBg: "rgba(16,185,129,0.2)", badgeColor: "#6ee7b7", pulse: false, dots: false },
+  WALKING: { label: "MOVE", dot: "#fbbf24", badgeBg: "rgba(245,158,11,0.18)", badgeColor: "#fde68a", pulse: true, dots: false },
+  MEETING: { label: "MEET", dot: "#c084fc", badgeBg: "rgba(192,132,252,0.2)", badgeColor: "#e9d5ff", pulse: true, dots: true },
+};
+
+function resolveAgentVisualState(agent) {
+  const rawVisual = (agent.visual_state || "").toUpperCase();
+  const rawStatus = (agent.status || "idle").toLowerCase();
+  if (rawStatus === "walking" && (!rawVisual || rawVisual === "IDLE")) return "WALKING";
+  if (rawStatus === "meeting" && (!rawVisual || rawVisual === "IDLE")) return "MEETING";
+  if (STATE_META[rawVisual]) return rawVisual;
+  const upperStatus = rawStatus.toUpperCase();
+  if (STATE_META[upperStatus]) return upperStatus;
+  if (agent.collaborating_with) return "COLLABORATING";
+  return "IDLE";
+}
+
 function shortestAngleDiff(current, target) {
   let diff = ((target - current + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (diff < -Math.PI) diff += Math.PI * 2;
   return diff;
 }
 
-/* ---------- Role-specific accessories (Atlas, Vector, Nova, Pulse, Shader) ---------- */
+/* ---------- Floating Check Ring for Quant QA Auditor ---------- */
+function FloatingCheckRing({ color = "#eab308" }) {
+  const ringRef = useRef();
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    if (ringRef.current) {
+      ringRef.current.rotation.y = t * 1.4;
+      ringRef.current.rotation.x = 0.25 + Math.sin(t * 1.8) * 0.12;
+      ringRef.current.position.y = 1.52 + Math.sin(t * 2.4) * 0.028;
+    }
+  });
+  return (
+    <group ref={ringRef} position={[0, 1.52, 0]}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.175, 0.014, 8, 28]} />
+        <meshBasicMaterial color={color} transparent opacity={0.9} />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.12, 0.145, 24]} />
+        <meshBasicMaterial color="#fde047" transparent opacity={0.45} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Checkmark pips */}
+      <mesh position={[-0.025, 0, 0]} rotation={[0, 0, -0.7]}>
+        <boxGeometry args={[0.02, 0.06, 0.014]} />
+        <meshBasicMaterial color="#fef08a" />
+      </mesh>
+      <mesh position={[0.025, 0.015, 0]} rotation={[0, 0, 0.7]}>
+        <boxGeometry args={[0.02, 0.1, 0.014]} />
+        <meshBasicMaterial color="#fef08a" />
+      </mesh>
+    </group>
+  );
+}
+
+/* ---------- Role-specific accessories (Atlas, Vector, Nova, Pulse, Shader, Scout, Quant) ---------- */
 function RoleAccessories({ id, color }) {
   if (id === "lead") {
     // Atlas: Commander collar + comms headset & boom mic
@@ -120,6 +179,75 @@ function RoleAccessories({ id, color }) {
           <torusGeometry args={[0.145, 0.022, 8, 18]} />
           <meshBasicMaterial color={color} />
         </mesh>
+      </group>
+    );
+  }
+  if (id === "scout") {
+    // Scout: Cyan holographic scanner visor + dual antenna pack
+    return (
+      <group>
+        {/* Holographic wraparound scanner visor */}
+        <mesh position={[0, 1.255, 0.155]}>
+          <boxGeometry args={[0.29, 0.09, 0.018]} />
+          <meshBasicMaterial color="#22d3ee" transparent opacity={0.72} />
+        </mesh>
+        <mesh position={[0, 1.305, 0.152]}>
+          <boxGeometry args={[0.3, 0.018, 0.026]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.75} roughness={0.25} />
+        </mesh>
+        {[-0.145, 0.145].map((sx) => (
+          <mesh key={sx} position={[sx, 1.255, 0.06]} castShadow>
+            <boxGeometry args={[0.025, 0.045, 0.18]} />
+            <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.3} />
+          </mesh>
+        ))}
+        {/* Targeting reticle pip */}
+        <mesh position={[0.095, 1.26, 0.168]}>
+          <ringGeometry args={[0.014, 0.022, 16]} />
+          <meshBasicMaterial color="#cffafe" side={THREE.DoubleSide} />
+        </mesh>
+        {/* Dual antenna pack on rear head module */}
+        <mesh position={[0, 1.24, -0.155]} castShadow>
+          <boxGeometry args={[0.17, 0.15, 0.055]} />
+          <meshStandardMaterial color="#1e293b" metalness={0.65} roughness={0.35} />
+        </mesh>
+        {[-0.055, 0.055].map((ax, i) => (
+          <group key={ax} position={[ax, 1.31, -0.16]} rotation={[0, 0, i === 0 ? 0.14 : -0.14]}>
+            <mesh position={[0, 0.11, 0]} castShadow>
+              <cylinderGeometry args={[0.008, 0.013, 0.22, 6]} />
+              <meshStandardMaterial color="#64748b" metalness={0.8} />
+            </mesh>
+            <mesh position={[0, 0.23, 0]}>
+              <sphereGeometry args={[0.02, 8, 8]} />
+              <meshBasicMaterial color={color} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+    );
+  }
+  if (id === "quant") {
+    // Quant: Gold QA auditor visor + floating check ring
+    return (
+      <group>
+        {/* Gold QA auditor visor + optical caliper */}
+        <mesh position={[0, 1.255, 0.15]}>
+          <boxGeometry args={[0.28, 0.07, 0.022]} />
+          <meshStandardMaterial color="#ca8a04" metalness={0.8} roughness={0.22} />
+        </mesh>
+        <mesh position={[0, 1.255, 0.163]}>
+          <boxGeometry args={[0.24, 0.032, 0.01]} />
+          <meshBasicMaterial color="#fde047" />
+        </mesh>
+        <mesh position={[0.085, 1.255, 0.168]}>
+          <cylinderGeometry args={[0.03, 0.03, 0.014, 14]} />
+          <meshBasicMaterial color="#facc15" transparent opacity={0.8} />
+        </mesh>
+        <mesh position={[0.15, 1.255, 0.03]} castShadow>
+          <boxGeometry args={[0.03, 0.055, 0.22]} />
+          <meshStandardMaterial color="#eab308" metalness={0.75} roughness={0.25} />
+        </mesh>
+        <FloatingCheckRing color={color} />
       </group>
     );
   }
@@ -224,7 +352,7 @@ export function MeetingLinks({ agents, avatarRefs }) {
         if (!p) continue;
         ex = p.position.x;
         ez = p.position.z;
-      } else if (a.status === "meeting") {
+      } else if (a.status === "meeting" || (a.visual_state || "").toUpperCase() === "MEETING") {
         ex = TABLE_POS.x;
         ez = TABLE_POS.z;
       } else continue;
@@ -260,6 +388,7 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
   const rightKneeRef = useRef();
   const auraRef = useRef();
   const pulseRef = useRef();
+  const alertBeaconRef = useRef();
   const sitBlendRef = useRef(0);
 
   const auraMat = useMemo(() => additive(agent.color, 0.0), [agent.color]);
@@ -278,7 +407,19 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
     return { x: dx + 0.72 * desk.facing, z: dz, faceAngle: desk.facing > 0 ? -Math.PI / 2 : Math.PI / 2 };
   }, [desk]);
 
-  const active = agent.status === "walking" || agent.status === "meeting" || Boolean(agent.collaborating_with);
+  const visualState = resolveAgentVisualState(agent);
+  const stateMeta = STATE_META[visualState] || STATE_META.IDLE;
+  const rawStatus = (agent.status || "idle").toLowerCase();
+  const isAlert = visualState === "BLOCKED" || visualState === "ERROR";
+  const active =
+    rawStatus === "walking" ||
+    rawStatus === "meeting" ||
+    Boolean(agent.collaborating_with) ||
+    visualState === "WORKING" ||
+    visualState === "THINKING" ||
+    visualState === "COLLABORATING" ||
+    visualState === "REVIEWING" ||
+    isAlert;
 
   useEffect(() => {
     avatarRefs.current[agent.id] = groupRef.current;
@@ -293,13 +434,15 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
 
     const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
+    const vs = resolveAgentVisualState(agent);
+    const rs = (agent.status || "idle").toLowerCase();
 
     // Determine if agent is parked at their own desk chair
     let targetX = rawTx;
     let targetZ = rawTz;
     let atDesk = false;
 
-    if (deskChairPos && agent.status !== "walking" && !agent.collaborating_with) {
+    if (deskChairPos && rs !== "walking" && rs !== "meeting" && !agent.collaborating_with) {
       const distDesk = Math.hypot(rawTx - deskChairPos.x, rawTz - deskChairPos.z);
       if (distDesk < 1.15) {
         atDesk = true;
@@ -342,7 +485,7 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
       desiredRotY = Math.atan2(dx, dz);
     } else if (atDesk && deskChairPos) {
       desiredRotY = deskChairPos.faceAngle;
-    } else if (agent.status === "meeting") {
+    } else if (rs === "meeting" || vs === "MEETING") {
       desiredRotY = Math.atan2(TABLE_POS.x - g.position.x, TABLE_POS.z - g.position.z);
     } else if (agent.collaborating_with && avatarRefs.current[agent.collaborating_with]) {
       const partner = avatarRefs.current[agent.collaborating_with];
@@ -352,20 +495,29 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
     }
     g.rotation.y += shortestAngleDiff(g.rotation.y, desiredRotY) * Math.min(1, dt * 10);
 
-    // Pose blending: sitting-and-typing vs walking vs meeting/idle
+    // Pose blending: sitting vs walking vs meeting/inspecting/alert
     const sittingGoal = atDesk && moveDist < 0.25 ? 1 : 0;
     sitBlendRef.current = THREE.MathUtils.lerp(sitBlendRef.current, sittingGoal, Math.min(1, dt * 7));
     const sit = sitBlendRef.current;
 
-    const isWalking = agent.status === "walking" || moveDist > 0.14;
-    const isTyping = sit > 0.5 && (agent.status === "working" || atDesk);
+    const isWalking = rs === "walking" || vs === "WALKING" || moveDist > 0.14;
+    const isWorking = vs === "WORKING" || rs === "working";
+    const isThinking = vs === "THINKING";
+    const isReviewing = vs === "REVIEWING";
+    const isCollaborating = vs === "COLLABORATING" || Boolean(agent.collaborating_with);
+    const isMeeting = rs === "meeting" || vs === "MEETING";
+    const isBlocked = vs === "BLOCKED";
+    const isError = vs === "ERROR";
+    const isCompleted = vs === "COMPLETED";
     const swing = isWalking ? Math.sin(t * 10.5) * 0.58 : 0;
 
     // Body height & lean
     if (bodyRef.current) {
       const walkBob = isWalking ? Math.abs(Math.sin(t * 10.5)) * 0.045 : 0;
+      const alertJolt = isError ? Math.sin(t * 20) * 0.018 : isBlocked ? Math.sin(t * 5) * 0.01 : 0;
       bodyRef.current.position.y = THREE.MathUtils.lerp(walkBob, -0.075, sit);
-      bodyRef.current.rotation.x = isWalking ? 0.08 : sit * 0.06;
+      bodyRef.current.rotation.x = isWalking ? 0.08 : isReviewing ? 0.12 : sit * 0.06;
+      bodyRef.current.rotation.z = alertJolt;
     }
 
     // Articulated Legs (hip + knee)
@@ -383,54 +535,164 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
 
     // Articulated Arms (shoulder + elbow)
     if (leftShoulderRef.current && rightShoulderRef.current && leftElbowRef.current && rightElbowRef.current) {
-      const typingSpeed = agent.status === "working" ? 16 : 6;
-      const typingAmp = agent.status === "working" ? 0.14 : 0.04;
+      const typingSpeed = isWorking ? 16 : isReviewing ? 9 : 5;
+      const typingAmp = isWorking ? 0.15 : isReviewing ? 0.08 : 0.03;
       const typeL = Math.sin(t * typingSpeed) * typingAmp;
       const typeR = -Math.sin(t * typingSpeed + 0.7) * typingAmp;
 
-      const meetGesture = agent.status === "meeting" ? Math.sin(t * 3.5) * 0.16 : 0;
-      const standShL = isWalking ? swing * 0.85 : agent.status === "meeting" ? -0.38 + meetGesture : Math.sin(t * 2) * 0.04;
-      const standShR = isWalking ? -swing * 0.85 : agent.status === "meeting" ? -0.22 - meetGesture : -Math.sin(t * 2) * 0.04;
-      const standElL = isWalking ? -0.28 : agent.status === "meeting" ? -0.6 : -0.12;
-      const standElR = isWalking ? -0.28 : agent.status === "meeting" ? -0.4 : -0.12;
+      // Seated pose variants
+      let sitShL = -0.74;
+      let sitShR = -0.74;
+      let sitElL = -0.76 + typeL;
+      let sitElR = -0.76 + typeR;
 
-      leftShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShL, -0.74, sit);
-      rightShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShR, -0.74, sit);
-      leftElbowRef.current.rotation.x = THREE.MathUtils.lerp(standElL, -0.76 + typeL, sit);
-      rightElbowRef.current.rotation.x = THREE.MathUtils.lerp(standElR, -0.76 + typeR, sit);
+      if (isThinking) {
+        sitShR = -1.12;
+        sitElR = -1.28 + Math.sin(t * 2.2) * 0.05;
+        sitElL = -0.68;
+      } else if (isReviewing) {
+        sitShL = -0.82;
+        sitShR = -0.98 + Math.sin(t * 2.4) * 0.1;
+        sitElL = -0.78;
+        sitElR = -0.95 + Math.sin(t * 2.4) * 0.12;
+      } else if (isError || isBlocked) {
+        const pulseArm = Math.sin(t * (isError ? 12 : 5)) * 0.08;
+        sitShL = -0.95 + pulseArm;
+        sitShR = -0.95 - pulseArm;
+        sitElL = -1.05;
+        sitElR = -1.05;
+      } else if (isCompleted) {
+        sitShL = -0.58;
+        sitShR = -0.58;
+        sitElL = -0.55;
+        sitElR = -0.55;
+      }
+
+      // Standing pose variants
+      const converseGesture = isMeeting || isCollaborating ? Math.sin(t * 3.6) * 0.18 : 0;
+      let standShL = Math.sin(t * 2) * 0.04;
+      let standShR = -Math.sin(t * 2) * 0.04;
+      let standElL = -0.12;
+      let standElR = -0.12;
+
+      if (isWalking) {
+        standShL = swing * 0.85;
+        standShR = -swing * 0.85;
+        standElL = -0.28;
+        standElR = -0.28;
+      } else if (isMeeting || isCollaborating) {
+        standShL = -0.38 + converseGesture;
+        standShR = -0.26 - converseGesture;
+        standElL = -0.62;
+        standElR = -0.45;
+      } else if (isReviewing) {
+        standShL = -0.32;
+        standShR = -0.88;
+        standElL = -0.42;
+        standElR = -0.95 + Math.sin(t * 2.4) * 0.12;
+      } else if (isThinking) {
+        standShR = -1.05;
+        standElR = -1.22 + Math.sin(t * 2.2) * 0.04;
+        standShL = -0.2;
+        standElL = -0.35;
+      } else if (isError || isBlocked) {
+        const pulseArm = Math.sin(t * (isError ? 12 : 5)) * 0.1;
+        standShL = -0.68 + pulseArm;
+        standShR = -0.68 - pulseArm;
+        standElL = -0.88;
+        standElR = -0.88;
+      } else if (isCompleted) {
+        standShL = -0.22;
+        standShR = -0.22;
+        standElL = -0.3;
+        standElR = -0.3;
+      }
+
+      leftShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShL, sitShL, sit);
+      rightShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShR, sitShR, sit);
+      leftElbowRef.current.rotation.x = THREE.MathUtils.lerp(standElL, sitElL, sit);
+      rightElbowRef.current.rotation.x = THREE.MathUtils.lerp(standElR, sitElR, sit);
     }
 
-    // Subtle head scan when working or conversing
+    // Head animation across all states
     if (headRef.current) {
-      if (isTyping && agent.status === "working") {
+      if (isError) {
+        headRef.current.rotation.y = Math.sin(t * 14) * 0.16;
+        headRef.current.rotation.x = -0.06;
+        headRef.current.rotation.z = Math.sin(t * 14) * 0.05;
+      } else if (isBlocked) {
+        headRef.current.rotation.y = Math.sin(t * 2.4) * 0.22;
+        headRef.current.rotation.x = -0.04;
+        headRef.current.rotation.z = 0;
+      } else if (isReviewing) {
+        headRef.current.rotation.y = Math.sin(t * 1.4) * 0.28;
+        headRef.current.rotation.x = 0.12 + Math.sin(t * 2.8) * 0.04;
+        headRef.current.rotation.z = 0;
+      } else if (isThinking) {
+        headRef.current.rotation.y = Math.sin(t * 1.1) * 0.14;
+        headRef.current.rotation.x = -0.08;
+        headRef.current.rotation.z = 0.08;
+      } else if (isWorking && sit > 0.5) {
         headRef.current.rotation.y = Math.sin(t * 1.9) * 0.18;
         headRef.current.rotation.x = 0.08 + Math.sin(t * 3.1) * 0.04;
-      } else if (agent.status === "meeting") {
-        headRef.current.rotation.y = Math.sin(t * 1.4) * 0.15;
-        headRef.current.rotation.x = 0;
+        headRef.current.rotation.z = 0;
+      } else if (isMeeting || isCollaborating) {
+        headRef.current.rotation.y = Math.sin(t * 1.5) * 0.16;
+        headRef.current.rotation.x = Math.sin(t * 3) * 0.03;
+        headRef.current.rotation.z = 0;
+      } else if (isCompleted) {
+        headRef.current.rotation.y = Math.sin(t * 0.8) * 0.06;
+        headRef.current.rotation.x = -0.04;
+        headRef.current.rotation.z = 0;
       } else {
         headRef.current.rotation.y = Math.sin(t * 0.9) * 0.06;
         headRef.current.rotation.x = 0;
+        headRef.current.rotation.z = 0;
       }
     }
 
-    // Floor neon aura & expanding pulse ring
-    const targetOp = active ? 0.34 : selected ? 0.2 : 0;
+    // Overhead alert beacon for BLOCKED / ERROR
+    if (alertBeaconRef.current) {
+      alertBeaconRef.current.visible = isError || isBlocked;
+      if (isError || isBlocked) {
+        alertBeaconRef.current.rotation.y = t * (isError ? 5 : 2.8);
+        alertBeaconRef.current.position.y = 1.62 + Math.sin(t * (isError ? 9 : 4.5)) * 0.045;
+      }
+    }
+
+    // Floor neon aura & expanding pulse ring (tinted by state for alert/review/done)
+    const ringColor = isError ? "#ef4444" : isBlocked ? "#f97316" : isReviewing ? "#eab308" : isCompleted ? "#10b981" : agent.color;
+    auraMat.color.set(ringColor);
+    pulseMat.color.set(ringColor);
+
+    const isVisuallyActive =
+      isWalking ||
+      isMeeting ||
+      isCollaborating ||
+      isWorking ||
+      isThinking ||
+      isReviewing ||
+      isError ||
+      isBlocked;
+
+    const pulseSpeed = isError ? 8 : isBlocked ? 5 : 4;
+    const targetOp = isError ? 0.44 : isBlocked ? 0.38 : isVisuallyActive ? 0.32 : isCompleted ? 0.22 : selected ? 0.2 : 0;
     auraMat.opacity = THREE.MathUtils.lerp(
       auraMat.opacity,
-      targetOp + (active ? Math.sin(t * 4) * 0.07 : 0),
+      targetOp + (isVisuallyActive ? Math.sin(t * pulseSpeed) * 0.08 : 0),
       Math.min(1, dt * 6)
     );
     if (auraRef.current) auraRef.current.visible = auraMat.opacity > 0.01;
     if (pulseRef.current) {
-      const p = (t * 0.9) % 1;
-      pulseRef.current.visible = active;
-      pulseRef.current.scale.setScalar(0.45 + p * 0.72);
-      pulseMat.opacity = (1 - p) * 0.58;
+      const rate = isError ? 1.7 : isBlocked ? 1.2 : 0.9;
+      const p = (t * rate) % 1;
+      pulseRef.current.visible = isVisuallyActive;
+      pulseRef.current.scale.setScalar(0.45 + p * 0.78);
+      pulseMat.opacity = (1 - p) * (isError || isBlocked ? 0.78 : 0.58);
     }
   });
 
-  const thinking = agent.status === "working" || agent.status === "meeting";
+  const baseRingColor = isAlert ? stateMeta.dot : agent.color;
 
   return (
     <>
@@ -455,7 +717,13 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
         <mesh ref={pulseRef} geometry={CHAR_GEO.pulseRing} material={pulseMat} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.024, 0]} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.026, 0]}>
           <ringGeometry args={[0.3, selected ? 0.44 : 0.37, 24]} />
-          <meshBasicMaterial color={agent.color} transparent opacity={selected || agent.status === "working" ? 0.95 : 0.55} />
+          <meshBasicMaterial color={baseRingColor} transparent opacity={selected || active ? 0.95 : 0.55} />
+        </mesh>
+
+        {/* Alert beacon crystal for BLOCKED / ERROR */}
+        <mesh ref={alertBeaconRef} position={[0, 1.62, 0]} visible={false}>
+          <octahedronGeometry args={[0.085, 0]} />
+          <meshBasicMaterial color={stateMeta.dot} />
         </mesh>
 
         {/* Articulated Character Body */}
@@ -569,14 +837,39 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
         </group>
 
         {/* Floating Name Pill & Speech Bubble */}
-        <Html position={[0, 1.78, 0]} center distanceFactor={11}>
+        <Html position={[0, 1.82, 0]} center distanceFactor={11}>
           <div className="bubble-tag">
             {agent.bubble && <div className="speech-bubble">{agent.bubble}</div>}
-            <div className={`name-pill${selected ? " selected" : ""}`} style={{ borderColor: agent.color, "--agent-color": agent.color }}>
-              <span className={`status-dot status-${agent.status || "idle"}`} style={{ background: agent.color }} />
+            <div
+              className={`name-pill${selected ? " selected" : ""}`}
+              style={{
+                borderColor: isAlert ? stateMeta.dot : agent.color,
+                "--agent-color": isAlert ? stateMeta.dot : agent.color,
+                boxShadow: isAlert ? `0 0 10px ${stateMeta.dot}66` : undefined,
+              }}
+            >
+              <span
+                className={`status-dot${stateMeta.pulse ? " status-working" : ""}`}
+                style={{ background: stateMeta.dot }}
+              />
               <span>{agent.name}</span>
-              {thinking && (
-                <span className="typing-dots small" aria-label="thinking">
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  padding: "1px 5px",
+                  borderRadius: "999px",
+                  background: stateMeta.badgeBg,
+                  color: stateMeta.badgeColor,
+                  border: `1px solid ${stateMeta.dot}55`,
+                  lineHeight: 1.25,
+                }}
+              >
+                {stateMeta.label}
+              </span>
+              {stateMeta.dots && (
+                <span className="typing-dots small" aria-label="active">
                   <i />
                   <i />
                   <i />

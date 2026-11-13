@@ -24,6 +24,19 @@ class Settings:
         self.economy_mode: bool = True
         self.idle_chat_interval_sec: int = 75
 
+    def _save_env(self) -> None:
+        lines = [
+            f"OPENROUTER_API_KEY={self.openrouter_api_key}",
+            f"GEMINI_API_KEY={self.gemini_api_key}",
+            f"GROQ_API_KEY={self.groq_api_key}",
+            f"CEREBRAS_API_KEY={self.cerebras_api_key}",
+            f"DEEPSEEK_API_KEY={self.deepseek_api_key}",
+            f"SILICONFLOW_API_KEY={self.siliconflow_api_key}",
+            f"ZAI_API_KEY={self.zai_api_key}",
+            f"OLLAMA_URL={self.ollama_url}",
+        ]
+        ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def update_keys(self, data: dict) -> None:
         mapping = {
             "openrouter_api_key": "OPENROUTER_API_KEY",
@@ -40,17 +53,36 @@ class Settings:
                 setattr(self, attr, str(data[attr]).strip())
                 os.environ[env_name] = getattr(self, attr)
 
-        lines = [
-            f"OPENROUTER_API_KEY={self.openrouter_api_key}",
-            f"GEMINI_API_KEY={self.gemini_api_key}",
-            f"GROQ_API_KEY={self.groq_api_key}",
-            f"CEREBRAS_API_KEY={self.cerebras_api_key}",
-            f"DEEPSEEK_API_KEY={self.deepseek_api_key}",
-            f"SILICONFLOW_API_KEY={self.siliconflow_api_key}",
-            f"ZAI_API_KEY={self.zai_api_key}",
-            f"OLLAMA_URL={self.ollama_url}",
-        ]
-        ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self._save_env()
+
+    def delete_key(self, provider: str) -> bool:
+        norm = provider.strip().lower()
+        key_map = {
+            "openrouter": ("openrouter_api_key", "OPENROUTER_API_KEY"),
+            "openrouter_api_key": ("openrouter_api_key", "OPENROUTER_API_KEY"),
+            "gemini": ("gemini_api_key", "GEMINI_API_KEY"),
+            "gemini_api_key": ("gemini_api_key", "GEMINI_API_KEY"),
+            "groq": ("groq_api_key", "GROQ_API_KEY"),
+            "groq_api_key": ("groq_api_key", "GROQ_API_KEY"),
+            "cerebras": ("cerebras_api_key", "CEREBRAS_API_KEY"),
+            "cerebras_api_key": ("cerebras_api_key", "CEREBRAS_API_KEY"),
+            "deepseek": ("deepseek_api_key", "DEEPSEEK_API_KEY"),
+            "deepseek_api_key": ("deepseek_api_key", "DEEPSEEK_API_KEY"),
+            "siliconflow": ("siliconflow_api_key", "SILICONFLOW_API_KEY"),
+            "siliconflow_api_key": ("siliconflow_api_key", "SILICONFLOW_API_KEY"),
+            "zai": ("zai_api_key", "ZAI_API_KEY"),
+            "zai_api_key": ("zai_api_key", "ZAI_API_KEY"),
+            "ollama": ("ollama_url", "OLLAMA_URL"),
+            "ollama_url": ("ollama_url", "OLLAMA_URL"),
+        }
+        if norm not in key_map:
+            return False
+        attr, env_name = key_map[norm]
+        setattr(self, attr, "")
+        if env_name in os.environ:
+            os.environ[env_name] = ""
+        self._save_env()
+        return True
 
     def provider_status(self) -> dict[str, bool]:
         return {

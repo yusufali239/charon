@@ -16,6 +16,8 @@ export const DESKS = [
   { id: "dev", label: "НОВА // DEV", gx: 1, gy: 10.5, facing: 1, accent: "#22c55e", screenKind: "code" },
   { id: "growth", label: "ПУЛЬС // GROWTH", gx: 14, gy: 2.5, facing: -1, accent: "#f59e0b", screenKind: "chart" },
   { id: "motion", label: "ШЕЙДЕР // MOTION", gx: 14, gy: 8.5, facing: -1, accent: "#a855f7", screenKind: "wave" },
+  { id: "scout", label: "СКАУТ // RESEARCH", gx: 5, gy: 1.5, facing: 1, accent: "#06b6d4", screenKind: "arch" },
+  { id: "quant", label: "КВАНТ // QA AUDIT", gx: 14, gy: 11.2, facing: -1, accent: "#eab308", screenKind: "code" },
 ];
 
 export const CAMERA_PRESETS = {
@@ -618,9 +620,9 @@ function LoungeAndCoffeeZone() {
   const [barX, , barZ] = toWorld(8, 1); // (0.5, -5.0)
   return (
     <group>
-      {/* Warm wood-slate lounge floor pad */}
-      <mesh position={[-1.4, 0.006, -4.9]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[6.8, 2.3]} />
+      {/* Warm wood-slate lounge floor pad (clear of Scout workstation at x=-2.5) */}
+      <mesh position={[1.85, 0.006, -4.9]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[6.1, 2.3]} />
         <meshStandardMaterial color="#231f24" roughness={0.8} />
       </mesh>
 
@@ -694,8 +696,8 @@ function LoungeAndCoffeeZone() {
         ))}
       </group>
 
-      {/* Plush Lounge Sofa + Rug + Coffee Table (clear of (2,2), (3,2), (6,2)) */}
-      <group position={[-3.25, 0, -5.25]}>
+      {/* Plush Lounge Sofa + Rug + Coffee Table (positioned east of coffee bar, clear of Scout & Growth desks) */}
+      <group position={[3.65, 0, -5.25]}>
         {/* Woven rug */}
         <mesh position={[0, 0.012, 0.55]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[2.3, 1.55]} />
@@ -1035,19 +1037,33 @@ function BackWallDashboard({ agents, taskRunning }) {
           { name: "Нова", status: "idle", color: "#22c55e" },
           { name: "Пульс", status: "idle", color: "#f59e0b" },
           { name: "Шейдер", status: "idle", color: "#a855f7" },
+          { name: "Скаут", status: "idle", color: "#06b6d4" },
+          { name: "Квант", status: "idle", color: "#eab308" },
         ];
-    list.slice(0, 5).forEach((ag, idx) => {
-      const ry = 64 + idx * 34;
+    list.slice(0, 7).forEach((ag, idx) => {
+      const ry = 58 + idx * 25;
+      const st = (ag.visual_state || ag.status || "idle").toUpperCase();
       ctx.fillStyle = "#13223b";
-      ctx.fillRect(558, ry, 182, 26);
+      ctx.fillRect(558, ry, 182, 21);
       ctx.fillStyle = ag.color || "#38bdf8";
-      ctx.fillRect(558, ry, 5, 26);
+      ctx.fillRect(558, ry, 5, 21);
       ctx.fillStyle = "#e2e8f0";
-      ctx.font = "bold 13px sans-serif";
-      ctx.fillText((ag.name || "").toUpperCase(), 572, ry + 17);
-      ctx.fillStyle = ag.status === "working" ? "#4ade80" : ag.status === "meeting" ? "#c084fc" : "#94a3b8";
-      ctx.font = "11px monospace";
-      ctx.fillText((ag.status || "idle").toUpperCase(), 675, ry + 17);
+      ctx.font = "bold 11px sans-serif";
+      ctx.fillText((ag.name || "").toUpperCase(), 570, ry + 14);
+      ctx.fillStyle =
+        st === "WORKING"
+          ? "#4ade80"
+          : st === "ERROR" || st === "BLOCKED"
+          ? "#f87171"
+          : st === "REVIEWING"
+          ? "#facc15"
+          : st === "MEETING" || st === "COLLABORATING"
+          ? "#c084fc"
+          : st === "THINKING"
+          ? "#38bdf8"
+          : "#94a3b8";
+      ctx.font = "10px monospace";
+      ctx.fillText(st.slice(0, 9), 668, ry + 14);
     });
 
     dashTex.needsUpdate = true;
@@ -1224,17 +1240,22 @@ export default function OfficeEnvironment({ agents, taskRunning, byId }) {
       <BackWallDashboard agents={agents} taskRunning={taskRunning} />
       <GlassPartitions />
 
-      {DESKS.map((d) => (
-        <Workstation
-          key={d.id}
-          gx={d.gx}
-          gy={d.gy}
-          facing={d.facing}
-          accent={d.accent}
-          screenKind={d.screenKind}
-          active={byId[d.id]?.status === "working"}
-        />
-      ))}
+      {DESKS.map((d) => {
+        const ag = byId[d.id];
+        const vs = (ag?.visual_state || ag?.status || "").toUpperCase();
+        const isDeskActive = vs === "WORKING" || vs === "THINKING" || vs === "REVIEWING" || ag?.status === "working";
+        return (
+          <Workstation
+            key={d.id}
+            gx={d.gx}
+            gy={d.gy}
+            facing={d.facing}
+            accent={d.accent}
+            screenKind={d.screenKind}
+            active={isDeskActive}
+          />
+        );
+      })}
 
       <ConferencePod active={taskRunning} />
       <LoungeAndCoffeeZone />

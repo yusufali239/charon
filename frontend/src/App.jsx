@@ -1,7 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Send, Settings, Zap, Shield, Code2, TrendingUp, Film, Copy, Check, RotateCcw, Trophy, MessagesSquare, Square, Eye, Users, Coffee } from "lucide-react";
+import {
+  Send,
+  Settings,
+  Zap,
+  Shield,
+  Code2,
+  TrendingUp,
+  Film,
+  Copy,
+  Check,
+  RotateCcw,
+  Trophy,
+  MessagesSquare,
+  Square,
+  Eye,
+  Users,
+  Coffee,
+  Activity,
+  Workflow,
+  Cpu,
+  Key,
+  Database,
+  Terminal,
+  BarChart3,
+  Sliders,
+  AlertTriangle,
+  CheckCircle2,
+} from "lucide-react";
 import OfficeScene from "./components/OfficeScene";
 import SettingsModal from "./components/SettingsModal";
+import CommandDashboard from "./components/CommandDashboard";
 
 const DEFAULT_ORIGIN =
   typeof window !== "undefined" &&
@@ -16,6 +44,100 @@ const CAMERA_PRESETS = [
   { id: "overview", label: "Обзор", icon: Eye },
   { id: "meeting", label: "Переговорная", icon: Users },
   { id: "lounge", label: "Лаунж", icon: Coffee },
+];
+
+const NAV_TABS = [
+  { id: "office", label: "3D Офис", icon: Eye, is3d: true },
+  { id: "overview", label: "Обзор", icon: Activity },
+  { id: "tasks", label: "Задачи", icon: Workflow, hasBadge: true },
+  { id: "agents", label: "Агенты", icon: Users },
+  { id: "models", label: "Модели", icon: Cpu },
+  { id: "providers", label: "Провайдеры", icon: Key },
+  { id: "workflow", label: "Пайплайн", icon: Workflow },
+  { id: "memory", label: "Память", icon: Database },
+  { id: "logs", label: "Логи", icon: Terminal },
+  { id: "analytics", label: "Квоты", icon: BarChart3 },
+  { id: "settings", label: "Настройки", icon: Sliders },
+];
+
+const ALL_DEFAULT_AGENTS = [
+  {
+    id: "lead",
+    name: "Атлас",
+    role: "Тимлид / Стратег",
+    specialty: "Оркестрация задач, стратегия, финальная сборка",
+    color: "#38bdf8",
+    provider: "gemini",
+    model: "gemini-3-flash-preview",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "cybersec",
+    name: "Вектор",
+    role: "Пентест и Кибербез",
+    specialty: "Аудит уязвимостей, OWASP, threat modeling, харденинг",
+    color: "#f43f5e",
+    provider: "openrouter",
+    model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "dev",
+    name: "Нова",
+    role: "Код и Автоматизация",
+    specialty: "Python/JS скрипты, парсеры, боты, архитектура",
+    color: "#22c55e",
+    provider: "cerebras",
+    model: "qwen-3.8-27b",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "growth",
+    name: "Пульс",
+    role: "Контент и Продвижение",
+    specialty: "Вирусные сценарии, воронки, SMM, SEO, копирайтинг",
+    color: "#f59e0b",
+    provider: "groq",
+    model: "openai/gpt-oss-120b",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "motion",
+    name: "Шейдер",
+    role: "Motion Graphics & Визуал",
+    specialty: "Раскадровки, 3D/AE-концепты, промпты, шейдеры",
+    color: "#a855f7",
+    provider: "deepseek",
+    model: "deepseek-chat",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "scout",
+    name: "Скаут",
+    role: "Research Analyst",
+    specialty: "Глубокий веб-поиск, анализ документации, сбор бенчмарков, разведка API",
+    color: "#06b6d4",
+    provider: "openrouter",
+    model: "moonshotai/kimi-k3.1-pro",
+    status: "idle",
+    visual_state: "IDLE",
+  },
+  {
+    id: "quant",
+    name: "Квант",
+    role: "QA / Независимый Аудитор",
+    specialty: "Независимая верификация кода, тестирование граничных условий, валидация гипотез",
+    color: "#eab308",
+    provider: "openrouter",
+    model: "qwen/qwen3-235b-a22b:free",
+    status: "idle",
+    visual_state: "IDLE",
+  },
 ];
 
 /* ---------- lightweight markdown-ish renderer for chat (no deps) ---------- */
@@ -182,17 +304,41 @@ export default function App() {
   const [providers, setProviders] = useState({});
   const [connected, setConnected] = useState(false);
 
+  // V2 Navigation & Dashboard state fields
+  const [activeTab, setActiveTab] = useState("office");
+  const [currentDag, setCurrentDag] = useState(null);
+  const [quotas, setQuotas] = useState([]);
+  const [files, setFiles] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [decisions, setDecisions] = useState([]);
+  const [pendingApproval, setPendingApproval] = useState(null);
+  const [autoRouting, setAutoRouting] = useState(true);
+  const [humanControlGates, setHumanControlGates] = useState({
+    highRiskApproval: true,
+    deployApproval: true,
+    qaConsensusGate: true,
+  });
+
   const [prompt, setPrompt] = useState("");
   const [targetAgent, setTargetAgent] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
-  const [chatFilter, setChatFilter] = useState("all"); // "all" | "results" | agentId
+  const [chatFilter, setChatFilter] = useState("all");
   const [resetSignal, setResetSignal] = useState(0);
-  const [cameraPreset, setCameraPreset] = useState(null); // { id, nonce }
+  const [cameraPreset, setCameraPreset] = useState(null);
   const [activePreset, setActivePreset] = useState("overview");
 
   const chatEndRef = useRef(null);
+
+  // Ensure all 7 agents are represented even if backend is in transition
+  const displayAgents = useMemo(() => {
+    if (!agents || agents.length === 0) return ALL_DEFAULT_AGENTS;
+    return ALL_DEFAULT_AGENTS.map((def) => {
+      const found = agents.find((a) => a.id === def.id);
+      return found ? { ...def, ...found } : def;
+    });
+  }, [agents]);
 
   const goPreset = useCallback((id) => {
     setSelectedId(null);
@@ -215,11 +361,14 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape" && !settingsOpen) resetCamera();
+      if (e.key === "Escape" && !settingsOpen) {
+        if (activeTab === "office") resetCamera();
+        else setActiveTab("office");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [resetCamera, settingsOpen]);
+  }, [resetCamera, settingsOpen, activeTab]);
 
   useEffect(() => {
     let ws;
@@ -234,6 +383,12 @@ export default function App() {
       if (typeof data.economy_mode === "boolean") setEconomyMode(data.economy_mode);
       if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
       if (data.providers) setProviders(data.providers);
+      if (data.current_dag) setCurrentDag(data.current_dag);
+      if (data.quotas) setQuotas(data.quotas);
+      if (data.files) setFiles(data.files);
+      if (data.logs) setLogs(data.logs);
+      if (data.decisions) setDecisions(data.decisions);
+      if (data.pending_approval !== undefined) setPendingApproval(data.pending_approval);
       setConnected(true);
     };
 
@@ -253,17 +408,51 @@ export default function App() {
         timer = setTimeout(connect, 2500);
       };
       ws.onmessage = (ev) => {
-        const data = JSON.parse(ev.data);
-        if (data.type === "state") {
-          applySnapshot(data);
-        } else if (data.type === "positions") {
-          setAgents(data.agents || []);
-          if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
-        } else if (data.type === "message") {
-          setMessages((prev) => [...prev.slice(-79), data.message]);
-        } else if (data.type === "config") {
-          setEconomyMode(Boolean(data.economy_mode));
-          setProviders(data.providers || {});
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === "state") {
+            applySnapshot(data);
+          } else if (data.type === "positions") {
+            setAgents(data.agents || []);
+            if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
+            if (data.current_dag) setCurrentDag(data.current_dag);
+          } else if (data.type === "message") {
+            setMessages((prev) => [...prev.slice(-79), data.message]);
+            if (data.message) {
+              setLogs((prev) => [
+                ...prev.slice(-199),
+                {
+                  id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  ts: data.message.ts || new Date().toLocaleTimeString(),
+                  level: data.message.type === "result" ? "INFO" : "INFO",
+                  agent: data.message.sender_id,
+                  message: `${data.message.sender_name}: ${data.message.text?.slice(0, 160)}...`,
+                },
+              ]);
+            }
+          } else if (data.type === "config") {
+            setEconomyMode(Boolean(data.economy_mode));
+            setProviders(data.providers || {});
+          } else if (data.type === "dag" || data.type === "task_update") {
+            if (data.dag) setCurrentDag(data.dag);
+            if (data.pending_approval !== undefined) setPendingApproval(data.pending_approval);
+          } else if (data.type === "approval_request") {
+            setPendingApproval(data.approval || data);
+          } else if (data.type === "log") {
+            setLogs((prev) => [...prev.slice(-199), data.log]);
+          } else if (data.type === "file") {
+            setFiles((prev) => {
+              const idx = prev.findIndex((f) => f.name === data.file.name);
+              if (idx >= 0) {
+                const next = [...prev];
+                next[idx] = data.file;
+                return next;
+              }
+              return [...prev, data.file];
+            });
+          }
+        } catch (e) {
+          // ignore parsing error
         }
       };
     };
@@ -293,12 +482,12 @@ export default function App() {
 
   const thinkingAgents = useMemo(() => {
     if (!taskRunning) return [];
-    return agents.filter(
+    return displayAgents.filter(
       (a) =>
         (a.status === "working" || a.status === "meeting" || Boolean(a.collaborating_with)) &&
         (chatFilter === "all" || chatFilter === a.id)
     );
-  }, [agents, taskRunning, chatFilter]);
+  }, [displayAgents, taskRunning, chatFilter]);
 
   const resultCount = useMemo(() => messages.filter((m) => m.type === "result").length, [messages]);
 
@@ -306,19 +495,74 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [filteredMessages, thinkingAgents.length]);
 
-  const sendTask = async (textToSend) => {
+  const refreshState = () => {
+    fetch(`${API_BASE}/api/state`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) {
+          setConnected(true);
+          if (d.agents) setAgents(d.agents);
+          if (d.messages) setMessages(d.messages);
+          if (typeof d.economy_mode === "boolean") setEconomyMode(d.economy_mode);
+          if (typeof d.task_running === "boolean") setTaskRunning(d.task_running);
+          if (d.providers) setProviders(d.providers);
+          if (d.current_dag !== undefined) setCurrentDag(d.current_dag);
+          if (d.quotas) setQuotas(d.quotas);
+          if (d.files || (d.memory && d.memory.files)) setMemoryFiles(d.files || d.memory.files);
+          if (d.logs || (d.memory && d.memory.logs)) setLogs(d.logs || d.memory.logs);
+          if (d.decisions || (d.memory && d.memory.decisions)) setDecisions(d.decisions || d.memory.decisions);
+          if (d.pending_approval !== undefined) setPendingApproval(d.pending_approval);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const sendTask = async (textToSend, customTarget) => {
     const clean = (textToSend ?? prompt).trim();
     if (!clean || taskRunning) return;
     setPrompt("");
-    await fetch(`${API_BASE}/api/task`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: clean, target_agent: targetAgent }),
-    });
+    setTaskRunning(true);
+    try {
+      await fetch(`${API_BASE}/api/task`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: clean, target_agent: customTarget || targetAgent }),
+      });
+    } finally {
+      refreshState();
+    }
   };
 
   const stopTask = async () => {
     await fetch(`${API_BASE}/api/task/stop`, { method: "POST" }).catch(() => {});
+    refreshState();
+  };
+
+  const retryTask = async (nodeId) => {
+    setTaskRunning(true);
+    try {
+      await fetch(`${API_BASE}/api/task/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_id: nodeId }),
+      });
+    } finally {
+      refreshState();
+    }
+  };
+
+  const approveTask = async (approvalId, approved, feedback = "") => {
+    setPendingApproval(null);
+    if (approved) setTaskRunning(true);
+    try {
+      await fetch(`${API_BASE}/api/approval`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: approvalId, approved, feedback }),
+      });
+    } finally {
+      refreshState();
+    }
   };
 
   const toggleEconomy = async () => {
@@ -337,6 +581,30 @@ export default function App() {
     });
   };
 
+  const saveSingleKey = async (provider, keyVal) => {
+    await saveKeys({ [`${provider}_api_key`]: keyVal });
+    setProviders((prev) => ({ ...prev, [provider]: true }));
+  };
+
+  const deleteKey = async (provider) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/key/${provider}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        // Fallback: update via POST settings if DELETE route is still propagating
+        await fetch(`${API_BASE}/api/settings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [`${provider}_api_key`]: "" }),
+        });
+      }
+    } catch (e) {
+      console.warn("Delete key fallback:", e);
+    }
+    setProviders((prev) => ({ ...prev, [provider]: false }));
+  };
+
   const updateAgentModel = async (id, provider, model) => {
     setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, provider, model } : a)));
     await fetch(`${API_BASE}/api/agents/${id}/model`, {
@@ -349,376 +617,459 @@ export default function App() {
   const hasAnyKey = Object.values(providers).some(Boolean);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 390px", width: "100%", height: "100%" }}>
-      {/* Left: 3D Office Viewport */}
-      <div style={{ position: "relative", width: "100%", height: "100%" }}>
-        <OfficeScene
-          agents={agents}
-          taskRunning={taskRunning}
-          selectedId={selectedId}
-          onSelect={selectAgent}
-          resetSignal={resetSignal}
-          cameraPreset={cameraPreset}
-        />
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", overflow: "hidden" }}>
+      {/* V2 Top Navigation Bar (11 Sections) */}
+      <header className="v2-top-navbar">
+        <div className="v2-nav-brand">
+          <span className="v2-brand-badge">V2</span>
+          <div>
+            <div className="v2-brand-title">
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: connected ? "#22c55e" : "#ef4444" }} />
+              CHARON 3D AI STUDIO
+            </div>
+            <div className="v2-brand-sub">
+              {taskRunning ? "Команда работает над задачей…" : "7 Автономных Агентов"}
+            </div>
+          </div>
+        </div>
 
-        {/* Top HUD */}
-        <div
-          style={{
-            position: "absolute",
-            top: 14,
-            left: 14,
-            right: 14,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            pointerEvents: "none",
-          }}
-        >
-          <div
+        {/* 11 Navigation Tabs */}
+        <nav className="v2-nav-tabs-wrapper">
+          {NAV_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                className={`v2-nav-tab-btn ${tab.is3d ? "tab-3d" : ""} ${isActive ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                <Icon size={14} />
+                <span>{tab.label}</span>
+                {tab.hasBadge && pendingApproval && (
+                  <span className="v2-tab-alert-badge">!</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Right Header Quick Controls */}
+        <div className="v2-nav-actions">
+          <button
+            onClick={toggleEconomy}
             style={{
-              pointerEvents: "auto",
-              background: "rgba(15, 23, 42, 0.85)",
-              border: "1px solid rgba(148, 163, 184, 0.2)",
-              backdropFilter: "blur(8px)",
-              padding: "8px 14px",
-              borderRadius: 12,
               display: "flex",
               alignItems: "center",
-              gap: 10,
+              gap: 6,
+              background: economyMode ? "rgba(34, 197, 94, 0.16)" : "rgba(15, 23, 42, 0.85)",
+              border: `1px solid ${economyMode ? "#22c55e" : "rgba(148,163,184,0.25)"}`,
+              color: economyMode ? "#4ade80" : "#cbd5e1",
+              padding: "6px 11px",
+              borderRadius: 8,
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: "pointer",
             }}
           >
-            <span
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: "50%",
-                background: connected ? "#22c55e" : "#ef4444",
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>CHARON 3D AI OFFICE</div>
-              <div style={{ fontSize: 11, color: "#94a3b8" }}>
-                {taskRunning ? "Команда работает над задачей…" : "Свободный режим (живут в офисе)"}
-              </div>
-            </div>
-          </div>
+            <Zap size={13} />
+            Эконом: {economyMode ? "ВКЛ" : "ВЫКЛ"}
+          </button>
 
-          <div style={{ pointerEvents: "auto", display: "flex", gap: 8 }}>
-            <div className="cam-group" title="Камера (Esc — сброс)">
-              {CAMERA_PRESETS.map((p) => {
-                const Icon = p.icon;
-                return (
-                  <button
-                    key={p.id}
-                    className={`cam-btn${activePreset === p.id ? " active" : ""}`}
-                    onClick={() => goPreset(p.id)}
-                  >
-                    <Icon size={13} />
-                    {p.label}
-                  </button>
-                );
-              })}
-              <button className="cam-btn icon" onClick={resetCamera} title="Сбросить камеру (Esc)">
-                <RotateCcw size={13} />
-              </button>
-            </div>
-            <button
-              onClick={toggleEconomy}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                background: economyMode ? "rgba(34, 197, 94, 0.16)" : "rgba(15, 23, 42, 0.85)",
-                border: `1px solid ${economyMode ? "#22c55e" : "rgba(148,163,184,0.25)"}`,
-                color: economyMode ? "#4ade80" : "#cbd5e1",
-                padding: "8px 12px",
-                borderRadius: 10,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              <Zap size={14} />
-              Эконом: {economyMode ? "ВКЛ" : "ВЫКЛ"}
-            </button>
-
-            <button
-              onClick={() => setSettingsOpen(true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                background: hasAnyKey ? "rgba(15, 23, 42, 0.85)" : "rgba(245, 158, 11, 0.2)",
-                border: `1px solid ${hasAnyKey ? "rgba(148,163,184,0.25)" : "#f59e0b"}`,
-                color: hasAnyKey ? "#e2e8f0" : "#fbbf24",
-                padding: "8px 12px",
-                borderRadius: 10,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              <Settings size={14} />
-              {hasAnyKey ? "API / Модели" : "Подключить API (0₽)"}
-            </button>
-          </div>
-        </div>
-
-        {/* Bottom Command Bar */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: 14,
-            left: 14,
-            right: 14,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {PRESETS.map((p) => {
-              const Icon = p.icon;
-              return (
-                <button
-                  key={p.label}
-                  onClick={() => sendTask(p.prompt)}
-                  disabled={taskRunning}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    background: "rgba(15, 23, 42, 0.84)",
-                    border: "1px solid rgba(148, 163, 184, 0.2)",
-                    color: "#cbd5e1",
-                    padding: "5px 10px",
-                    borderRadius: 999,
-                    fontSize: 11,
-                    cursor: "pointer",
-                    backdropFilter: "blur(6px)",
-                  }}
-                >
-                  <Icon size={12} color="#38bdf8" />
-                  {p.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendTask();
-            }}
+          <button
+            onClick={() => setSettingsOpen(true)}
             style={{
               display: "flex",
-              gap: 8,
-              background: "rgba(15, 23, 42, 0.9)",
-              border: "1px solid rgba(148, 163, 184, 0.25)",
-              borderRadius: 14,
-              padding: 8,
-              backdropFilter: "blur(10px)",
+              alignItems: "center",
+              gap: 6,
+              background: hasAnyKey ? "rgba(15, 23, 42, 0.85)" : "rgba(245, 158, 11, 0.2)",
+              border: `1px solid ${hasAnyKey ? "rgba(148,163,184,0.25)" : "#f59e0b"}`,
+              color: hasAnyKey ? "#e2e8f0" : "#fbbf24",
+              padding: "6px 11px",
+              borderRadius: 8,
+              fontSize: 11.5,
+              fontWeight: 600,
+              cursor: "pointer",
             }}
           >
-            <select
-              value={targetAgent}
-              onChange={(e) => setTargetAgent(e.target.value)}
-              style={{
-                background: "#020617",
-                color: "#e2e8f0",
-                border: "1px solid rgba(148,163,184,0.2)",
-                borderRadius: 8,
-                padding: "0 10px",
-                fontSize: 12,
-              }}
-            >
-              <option value="all">Вся команда</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.role.split("/")[0].trim()})
-                </option>
-              ))}
-            </select>
-
-            <input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Дать задание офису (пентест, код, контент, motion graphics)..."
-              style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "#f8fafc",
-                fontSize: 13,
-              }}
-            />
-
-            <button
-              type="submit"
-              disabled={taskRunning || !prompt.trim()}
-              style={{
-                background: taskRunning ? "#334155" : "#0284c7",
-                color: "#fff",
-                border: "none",
-                borderRadius: 10,
-                padding: "8px 14px",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: taskRunning ? "not-allowed" : "pointer",
-              }}
-            >
-              <Send size={14} />
-              Запуск
-            </button>
-            {taskRunning && (
-              <button type="button" className="stop-btn" onClick={stopTask} title="Остановить задачу">
-                <Square size={12} fill="currentColor" />
-                Стоп
-              </button>
-            )}
-          </form>
+            <Settings size={13} />
+            {hasAnyKey ? "Ключи API" : "Подключить API (0₽)"}
+          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Right Sidebar: Live Agent Comms */}
-      <div
-        style={{
-          background: "#0b1120",
-          borderLeft: "1px solid rgba(148, 163, 184, 0.16)",
-          display: "flex",
-          flexDirection: "column",
-          height: "100%",
-          overflow: "hidden",
-        }}
-      >
-        <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(148,163,184,0.14)" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Штат офиса ({agents.length})</div>
-          <div className="roster">
-            {agents.map((a) => {
-              const meta = statusMeta(a.status);
-              const busy = taskRunning && (a.status === "working" || a.status === "meeting" || Boolean(a.collaborating_with));
-              const partner = a.collaborating_with && agents.find((x) => x.id === a.collaborating_with);
-              return (
-                <button
-                  key={a.id}
-                  className={`roster-card${selectedId === a.id ? " selected" : ""}`}
-                  style={{ "--agent-color": a.color }}
-                  onClick={() => selectAgent(a.id)}
-                  title={a.role}
+      {/* Main Area: 3D Office OR CommandDashboard */}
+      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {activeTab === "office" ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 390px", width: "100%", height: "100%" }}>
+            {/* Left: 3D Office Viewport */}
+            <div style={{ position: "relative", width: "100%", height: "100%" }}>
+              <OfficeScene
+                agents={displayAgents}
+                taskRunning={taskRunning}
+                selectedId={selectedId}
+                onSelect={selectAgent}
+                resetSignal={resetSignal}
+                cameraPreset={cameraPreset}
+              />
+
+              {/* Floating Pending Approval Alert in 3D View */}
+              {pendingApproval && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 14,
+                    left: 14,
+                    right: 14,
+                    zIndex: 20,
+                  }}
                 >
-                  <span className={`avatar-dot status-${meta.cls}`} style={{ background: a.color }} />
-                  <span className="roster-name">{a.name}</span>
-                  <span className={`status-badge ${meta.cls}`}>
-                    {busy ? (
-                      <>
-                        {partner ? `Ревью · ${partner.name}` : a.status === "meeting" ? "Обсуждает" : "Думает"}
-                        <TypingDots />
-                      </>
-                    ) : (
-                      meta.label
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Chat filters */}
-        <div className="chat-filters">
-          <button className={`filter-chip${chatFilter === "all" ? " active" : ""}`} onClick={() => setChatFilter("all")}>
-            <MessagesSquare size={12} /> Все
-          </button>
-          <button
-            className={`filter-chip result${chatFilter === "results" ? " active" : ""}`}
-            onClick={() => setChatFilter("results")}
-          >
-            <Trophy size={12} /> Итоги{resultCount ? ` (${resultCount})` : ""}
-          </button>
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              className={`filter-chip${chatFilter === a.id ? " active" : ""}`}
-              style={{ "--agent-color": a.color }}
-              onClick={() => setChatFilter(chatFilter === a.id ? "all" : a.id)}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: a.color }} />
-              {a.name}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-          {messages.length === 0 && (
-            <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-              Ожидаем подключения к офису…
-            </div>
-          )}
-          {messages.length > 0 && filteredMessages.length === 0 && (
-            <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-              {chatFilter === "results" ? "Итоговых результатов пока нет." : "Нет сообщений по этому фильтру."}
-            </div>
-          )}
-          {filteredMessages.map((m) => (
-            <div
-              key={m.id}
-              className={`chat-msg${m.type === "result" ? " result" : ""}`}
-              style={{
-                background: m.type === "result" ? "rgba(14, 165, 233, 0.1)" : "#0f172a",
-                border: `1px solid ${m.type === "result" ? "rgba(56,189,248,0.4)" : "rgba(148,163,184,0.12)"}`,
-                borderRadius: 10,
-                padding: "9px 11px",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: m.color }}>
-                  <span>{m.sender_name}</span>
-                  <span style={{ color: "#64748b", fontWeight: 400, fontSize: 10 }}>{m.role}</span>
+                  <div className="v2-approval-alert-banner">
+                    <div className="v2-approval-left">
+                      <div className="v2-approval-badge">
+                        <AlertTriangle size={15} />
+                        <span>ОДОБРЕНИЕ</span>
+                      </div>
+                      <div className="v2-approval-info">
+                        <div className="v2-approval-title">{pendingApproval.task || "Критическая операция"}</div>
+                        <div className="v2-approval-desc">{pendingApproval.description || "Требуется согласие оператора."}</div>
+                      </div>
+                    </div>
+                    <div className="v2-approval-actions">
+                      <button className="v2-btn-approve" onClick={() => approveTask(pendingApproval.id, true)}>
+                        <CheckCircle2 size={14} /> Одобрить
+                      </button>
+                      <button className="v2-btn-reject" onClick={() => approveTask(pendingApproval.id, false)}>
+                        <Square size={13} /> Отклонить
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 10, color: "#475569" }}>{m.ts}</span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(m.text);
-                      setCopiedId(m.id);
-                      setTimeout(() => setCopiedId(null), 1500);
-                    }}
-                    title="Копировать"
-                    style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
-                  >
-                    {copiedId === m.id ? <Check size={12} color="#22c55e" /> : <Copy size={12} />}
+              )}
+
+              {/* Top HUD Camera Controls in 3D Scene */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: pendingApproval ? 80 : 14,
+                  right: 14,
+                  display: "flex",
+                  gap: 8,
+                  zIndex: 10,
+                }}
+              >
+                <div className="cam-group" title="Камера (Esc — сброс)">
+                  {CAMERA_PRESETS.map((p) => {
+                    const Icon = p.icon;
+                    return (
+                      <button
+                        key={p.id}
+                        className={`cam-btn${activePreset === p.id ? " active" : ""}`}
+                        onClick={() => goPreset(p.id)}
+                      >
+                        <Icon size={13} />
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                  <button className="cam-btn icon" onClick={resetCamera} title="Сбросить камеру (Esc)">
+                    <RotateCcw size={13} />
                   </button>
                 </div>
               </div>
-              <RichText text={m.text} />
-              {m.model && (
-                <div style={{ fontSize: 10, color: "#64748b", marginTop: 5 }}>
-                  Модель: {m.model}
+
+              {/* Bottom Command Bar */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 14,
+                  left: 14,
+                  right: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  zIndex: 10,
+                }}
+              >
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {PRESETS.map((p) => {
+                    const Icon = p.icon;
+                    return (
+                      <button
+                        key={p.label}
+                        onClick={() => sendTask(p.prompt)}
+                        disabled={taskRunning}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 5,
+                          background: "rgba(15, 23, 42, 0.88)",
+                          border: "1px solid rgba(148, 163, 184, 0.2)",
+                          color: "#cbd5e1",
+                          padding: "5px 11px",
+                          borderRadius: 999,
+                          fontSize: 11,
+                          cursor: "pointer",
+                          backdropFilter: "blur(6px)",
+                        }}
+                      >
+                        <Icon size={12} color="#38bdf8" />
+                        {p.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    sendTask();
+                  }}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    background: "rgba(15, 23, 42, 0.92)",
+                    border: "1px solid rgba(148, 163, 184, 0.25)",
+                    borderRadius: 14,
+                    padding: 8,
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  <select
+                    value={targetAgent}
+                    onChange={(e) => setTargetAgent(e.target.value)}
+                    style={{
+                      background: "#020617",
+                      color: "#e2e8f0",
+                      border: "1px solid rgba(148,163,184,0.2)",
+                      borderRadius: 8,
+                      padding: "0 10px",
+                      fontSize: 12,
+                    }}
+                  >
+                    <option value="all">Вся команда (7 агентов)</option>
+                    {displayAgents.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.role.split("/")[0].trim()})
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Дать задание офису (пентест, код, контент, motion graphics, ресерч, QA)..."
+                    style={{
+                      flex: 1,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      color: "#f8fafc",
+                      fontSize: 13,
+                    }}
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={taskRunning || !prompt.trim()}
+                    style={{
+                      background: taskRunning ? "#334155" : "#0284c7",
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 10,
+                      padding: "8px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 600,
+                      fontSize: 13,
+                      cursor: taskRunning ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    <Send size={14} />
+                    Запуск
+                  </button>
+                  {taskRunning && (
+                    <button type="button" className="stop-btn" onClick={stopTask} title="Остановить задачу">
+                      <Square size={12} fill="currentColor" />
+                      Стоп
+                    </button>
+                  )}
+                </form>
+              </div>
             </div>
-          ))}
-          {thinkingAgents.map((a) => (
-            <div key={`typing-${a.id}`} className="typing-row" style={{ "--agent-color": a.color }}>
-              <span style={{ color: a.color, fontWeight: 700 }}>{a.name}</span>
-              <span style={{ color: "#94a3b8" }}>{a.status === "meeting" ? "обсуждает" : "печатает"}</span>
-              <TypingDots />
+
+            {/* Right Sidebar: Live Agent Comms */}
+            <div
+              style={{
+                background: "#0b1120",
+                borderLeft: "1px solid rgba(148, 163, 184, 0.16)",
+                display: "flex",
+                flexDirection: "column",
+                height: "100%",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(148,163,184,0.14)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+                  Штат офиса ({displayAgents.length})
+                </div>
+                <div className="roster">
+                  {displayAgents.map((a) => {
+                    const meta = statusMeta(a.status);
+                    const busy = taskRunning && (a.status === "working" || a.status === "meeting" || Boolean(a.collaborating_with));
+                    const partner = a.collaborating_with && displayAgents.find((x) => x.id === a.collaborating_with);
+                    return (
+                      <button
+                        key={a.id}
+                        className={`roster-card${selectedId === a.id ? " selected" : ""}`}
+                        style={{ "--agent-color": a.color }}
+                        onClick={() => selectAgent(a.id)}
+                        title={a.role}
+                      >
+                        <span className={`avatar-dot status-${meta.cls}`} style={{ background: a.color }} />
+                        <span className="roster-name">{a.name}</span>
+                        <span className={`status-badge ${meta.cls}`}>
+                          {busy ? (
+                            <>
+                              {partner ? `Ревью · ${partner.name}` : a.status === "meeting" ? "Обсуждает" : "Думает"}
+                              <TypingDots />
+                            </>
+                          ) : (
+                            meta.label
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Chat filters */}
+              <div className="chat-filters">
+                <button className={`filter-chip${chatFilter === "all" ? " active" : ""}`} onClick={() => setChatFilter("all")}>
+                  <MessagesSquare size={12} /> Все
+                </button>
+                <button
+                  className={`filter-chip result${chatFilter === "results" ? " active" : ""}`}
+                  onClick={() => setChatFilter("results")}
+                >
+                  <Trophy size={12} /> Итоги{resultCount ? ` (${resultCount})` : ""}
+                </button>
+                {displayAgents.map((a) => (
+                  <button
+                    key={a.id}
+                    className={`filter-chip${chatFilter === a.id ? " active" : ""}`}
+                    style={{ "--agent-color": a.color }}
+                    onClick={() => setChatFilter(chatFilter === a.id ? "all" : a.id)}
+                  >
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: a.color }} />
+                    {a.name}
+                  </button>
+                ))}
+              </div>
+
+              {/* Live Messages List */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                {messages.length === 0 && (
+                  <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
+                    Ожидаем подключения к офису…
+                  </div>
+                )}
+                {messages.length > 0 && filteredMessages.length === 0 && (
+                  <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
+                    {chatFilter === "results" ? "Итоговых результатов пока нет." : "Нет сообщений по этому фильтру."}
+                  </div>
+                )}
+                {filteredMessages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`chat-msg${m.type === "result" ? " result" : ""}`}
+                    style={{
+                      background: m.type === "result" ? "rgba(14, 165, 233, 0.1)" : "#0f172a",
+                      border: `1px solid ${m.type === "result" ? "rgba(56,189,248,0.4)" : "rgba(148,163,184,0.12)"}`,
+                      borderRadius: 10,
+                      padding: "9px 11px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: m.color }}>
+                        <span>{m.sender_name}</span>
+                        <span style={{ color: "#64748b", fontWeight: 400, fontSize: 10 }}>{m.role}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 10, color: "#475569" }}>{m.ts}</span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(m.text);
+                            setCopiedId(m.id);
+                            setTimeout(() => setCopiedId(null), 1500);
+                          }}
+                          title="Копировать"
+                          style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
+                        >
+                          {copiedId === m.id ? <Check size={12} color="#22c55e" /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </div>
+                    <RichText text={m.text} />
+                    {m.model && (
+                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 5 }}>
+                        Модель: {m.model}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {thinkingAgents.map((a) => (
+                  <div key={`typing-${a.id}`} className="typing-row" style={{ "--agent-color": a.color }}>
+                    <span style={{ color: a.color, fontWeight: 700 }}>{a.name}</span>
+                    <span style={{ color: "#94a3b8" }}>{a.status === "meeting" ? "обсуждает" : "печатает"}</span>
+                    <TypingDots />
+                  </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
             </div>
-          ))}
-          <div ref={chatEndRef} />
-        </div>
+          </div>
+        ) : (
+          <CommandDashboard
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            agents={displayAgents}
+            currentDag={currentDag}
+            quotas={quotas}
+            files={files}
+            logs={logs}
+            decisions={decisions}
+            pendingApproval={pendingApproval}
+            taskRunning={taskRunning}
+            economyMode={economyMode}
+            onToggleEconomy={toggleEconomy}
+            autoRouting={autoRouting}
+            onToggleAutoRouting={() => setAutoRouting((v) => !v)}
+            humanControlGates={humanControlGates}
+            onUpdateHumanGates={setHumanControlGates}
+            providers={providers}
+            onSaveKey={saveSingleKey}
+            onDeleteKey={deleteKey}
+            onUpdateAgentModel={updateAgentModel}
+            onStartTask={sendTask}
+            onStopTask={stopTask}
+            onRetryTask={retryTask}
+            onApproveTask={approveTask}
+            onSelectAgent={selectAgent}
+            onSwitchToOffice={() => setActiveTab("office")}
+          />
+        )}
       </div>
 
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         providers={providers}
-        agents={agents}
+        agents={displayAgents}
         onSaveKeys={saveKeys}
+        onDeleteKey={deleteKey}
         onUpdateAgentModel={updateAgentModel}
       />
     </div>

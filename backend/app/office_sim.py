@@ -17,8 +17,10 @@ GRID_H = 13
 BLOCKED_CELLS: set[tuple[int, int]] = {
     # Left desks (x=1, y=2,6,10)
     (1, 2), (1, 3), (1, 6), (1, 7), (1, 10), (1, 11),
-    # Right desks (x=14, y=2,8)
-    (14, 2), (14, 3), (14, 8), (14, 9),
+    # Scout desk (x=5, y=1)
+    (5, 1),
+    # Right desks (x=14, y=2,8,11,12)
+    (14, 2), (14, 3), (14, 8), (14, 9), (14, 11), (14, 12),
     # Conference table center (x=8, y=5)
     (8, 5),
     # Coffee lounge (top middle)
@@ -37,14 +39,21 @@ COLLAB_VISIT_POS: dict[str, tuple[int, int]] = {
     "lead": (3, 2),
     "cybersec": (3, 6),
     "dev": (3, 10),
+    "scout": (5, 3),
     "growth": (12, 2),
     "motion": (12, 8),
+    "quant": (12, 11),
 }
 
 DESK_CELLS: set[tuple[int, int]] = {prof.desk_pos for prof in AGENTS.values()}
 DESK_FACING: dict[str, tuple[float, float]] = {
-    aid: (-1.0, 0.0) if prof.desk_pos[0] < 7 else (1.0, 0.0)
-    for aid, prof in AGENTS.items()
+    "lead": (-1.0, 0.0),
+    "cybersec": (-1.0, 0.0),
+    "dev": (-1.0, 0.0),
+    "scout": (0.0, -1.0),
+    "growth": (1.0, 0.0),
+    "motion": (1.0, 0.0),
+    "quant": (1.0, 0.0),
 }
 
 # Zero-token idle flavor lines (used during Economy Mode and silent idle routines)
@@ -146,6 +155,7 @@ class AgentState:
     target_y: int
     path: list[tuple[int, int]] = field(default_factory=list)
     status: str = "idle"  # idle | walking | meeting | working
+    visual_state: str = "IDLE"  # IDLE | THINKING | WORKING | COLLABORATING | REVIEWING | BLOCKED | ERROR | COMPLETED
     bubble: str = ""
     bubble_until: float = 0.0
     collaborating_with: str = ""
@@ -161,6 +171,14 @@ class AgentState:
 
     def to_dict(self) -> dict:
         now = time.time()
+        vs = self.visual_state
+        if vs == "IDLE":
+            if self.status == "working":
+                vs = "WORKING"
+            elif self.status == "meeting":
+                vs = "COLLABORATING" if self.collaborating_with else "MEETING"
+            elif self.collaborating_with:
+                vs = "COLLABORATING"
         return {
             "id": self.profile.id,
             "name": self.profile.name,
@@ -173,6 +191,7 @@ class AgentState:
             "y": round(self.y, 3),
             "facing": round(self.facing, 3),
             "status": self.status,
+            "visual_state": vs,
             "bubble": self.bubble if now < self.bubble_until else "",
             "collaborating_with": self.collaborating_with,
         }
@@ -183,7 +202,7 @@ class OfficeSimulation:
         self.agents: dict[str, AgentState] = {}
         for aid, prof in AGENTS.items():
             dx, dy = prof.desk_pos
-            fx, fy = DESK_FACING[aid]
+            fx, fy = DESK_FACING.get(aid, (-1.0, 0.0))
             self.agents[aid] = AgentState(
                 profile=prof,
                 x=float(dx),
@@ -191,6 +210,7 @@ class OfficeSimulation:
                 target_x=dx,
                 target_y=dy,
                 facing=_direction_yaw(fx, fy),
+                visual_state="IDLE",
             )
         self.clients: set[WebSocket] = set()
         self.messages: list[dict] = []
@@ -258,7 +278,7 @@ class OfficeSimulation:
     def _default_face_for(self, agent_id: str, gx: int, gy: int) -> tuple[float, float] | None:
         prof = self.agents[agent_id].profile
         if (gx, gy) == prof.desk_pos:
-            return DESK_FACING[agent_id]
+            return DESK_FACING.get(agent_id, (-1.0, 0.0))
         if (gx, gy) == prof.meeting_pos:
             return (float(CONFERENCE_CENTER[0] - gx), float(CONFERENCE_CENTER[1] - gy))
         if (gx, gy) in COFFEE_SPOTS:
@@ -295,8 +315,6 @@ class OfficeSimulation:
         if not direct or not face_dir:
             return direct
 
-        # If facing is cardinal, try approaching from the cell behind the desired facing
-        # so the avatar naturally walks in facing the desk / coffee machine / colleague.
         ux, uy = _normalize_vec(*face_dir)
         if abs(abs(ux) - 1.0) < 0.15 or abs(abs(uy) - 1.0) < 0.15:
             ax, ay = goal[0] - round(ux), goal[1] - round(uy)
@@ -326,7 +344,7 @@ class OfficeSimulation:
                 st.idle_wait_until = 0.0
                 dx, dy = st.profile.desk_pos
                 if (dx, dy) != pos:
-                    self._assign_move(aid, dx, dy, "idle", DESK_FACING[aid])
+                    self._assign_move(aid, dx, dy, "idle", DESK_FACING.get(aid, (-1.0, 0.0)))
 
     def _assign_move(
         self,
@@ -352,7 +370,6 @@ class OfficeSimulation:
             st.status = next_status
             self._apply_arrival_orientation(st)
         else:
-            # Path temporarily blocked by moving agents; keep status walking until tick_loop resolves
             st.status = "walking"
 
     def _apply_arrival_orientation(self, st: AgentState) -> None:
@@ -487,7 +504,6 @@ class OfficeSimulation:
 
     def _advance_agent_movement(self, aid: str, st: AgentState, now: float, speed: float) -> bool:
         if not st.path:
-            # Handle case where path was empty only because route was momentarily congested
             if st.status == "walking" and (round(st.x), round(st.y)) != (st.target_x, st.target_y):
                 st.path = self._plan_path(
                     aid,
@@ -499,7 +515,7 @@ class OfficeSimulation:
                 if not st.path:
                     st._wait_ticks += 1
                     if st._wait_ticks > 16 and not self.task_running:
-                        fx, fy = DESK_FACING[aid]
+                        fx, fy = DESK_FACING.get(aid, (-1.0, 0.0))
                         dx, dy = st.profile.desk_pos
                         st.idle_steps.clear()
                         self._assign_move(aid, dx, dy, "idle", (fx, fy))
@@ -537,7 +553,7 @@ class OfficeSimulation:
                         st._wait_ticks += 1
                         if st._wait_ticks > 18 and st.status != "working" and not self.task_running:
                             st.idle_steps.clear()
-                            fx, fy = DESK_FACING[aid]
+                            fx, fy = DESK_FACING.get(aid, (-1.0, 0.0))
                             dx, dy = st.profile.desk_pos
                             if (st.target_x, st.target_y) != (dx, dy):
                                 self._assign_move(aid, dx, dy, "idle", (fx, fy))
@@ -585,7 +601,7 @@ class OfficeSimulation:
                     gx, gy = random.choice(alts)
                 else:
                     gx, gy = st.profile.desk_pos
-                    face_dir = DESK_FACING[aid]
+                    face_dir = DESK_FACING.get(aid, (-1.0, 0.0))
                     st.idle_steps.clear()
             elif step.category == "server":
                 alts = [p for p in SERVER_SPOTS if p not in reserved]
@@ -593,7 +609,7 @@ class OfficeSimulation:
                     gx, gy = random.choice(alts)
                 else:
                     gx, gy = st.profile.desk_pos
-                    face_dir = DESK_FACING[aid]
+                    face_dir = DESK_FACING.get(aid, (-1.0, 0.0))
                     st.idle_steps.clear()
             elif step.category == "lounge":
                 alts = [p for p in LOUNGE_SPOTS if p not in reserved]
@@ -602,7 +618,7 @@ class OfficeSimulation:
                     face_dir = (float(CONFERENCE_CENTER[0] - gx), float(CONFERENCE_CENTER[1] - gy))
                 else:
                     gx, gy = st.profile.desk_pos
-                    face_dir = DESK_FACING[aid]
+                    face_dir = DESK_FACING.get(aid, (-1.0, 0.0))
                     st.idle_steps.clear()
             else:
                 gx, gy = self._nearest_free_tile(aid, (gx, gy))
@@ -615,9 +631,8 @@ class OfficeSimulation:
         st = self.agents[aid]
         reserved = self._reserved_targets(exclude_id=aid)
         desk = st.profile.desk_pos
-        desk_face = DESK_FACING[aid]
+        desk_face = DESK_FACING.get(aid, (-1.0, 0.0))
 
-        # If currently away from own desk with nothing queued, head back cleanly
         if (round(st.x), round(st.y)) != desk:
             self._start_idle_step(
                 aid,
@@ -625,7 +640,7 @@ class OfficeSimulation:
             )
             return
 
-        # Keep at least 2 agents at desks so the office looks balanced
+        # Keep at least 3 agents at desks so the office looks active and balanced
         away_count = sum(
             1
             for oid, o in self.agents.items()
@@ -635,7 +650,7 @@ class OfficeSimulation:
             return
 
         routines: list[str] = ["coffee", "visit", "lounge"]
-        if aid in ("cybersec", "dev", "lead") or random.random() < 0.3:
+        if aid in ("cybersec", "dev", "lead", "quant") or random.random() < 0.3:
             routines.append("server")
         random.shuffle(routines)
 
@@ -664,7 +679,6 @@ class OfficeSimulation:
                 ]
                 if not candidates:
                     continue
-                # Prefer colleagues who are actually sitting at their desk
                 at_desk = [
                     tid for tid in candidates
                     if (round(self.agents[tid].x), round(self.agents[tid].y)) == self.agents[tid].profile.desk_pos
@@ -702,7 +716,6 @@ class OfficeSimulation:
                 free_lounge = [p for p in LOUNGE_SPOTS if p not in reserved]
                 if not free_lounge:
                     continue
-                # If another agent is already resting in lounge/coffee, stand near and face them
                 others_in_lounge = [
                     o for oid, o in self.agents.items()
                     if oid != aid and not o.path and (round(o.x), round(o.y)) in (LOUNGE_SPOTS + COFFEE_SPOTS)
@@ -735,7 +748,6 @@ class OfficeSimulation:
                 if self._advance_agent_movement(aid, st, now, speed):
                     moved = True
 
-                # Advance queued multi-step idle routine once wait timer expires
                 if (
                     not self.task_running
                     and not st.path
@@ -811,8 +823,9 @@ class OfficeSimulation:
         assignments = []
         for aid, st in self.agents.items():
             st.collaborating_with = ""
+            st.visual_state = "IDLE"
             dx, dy = st.profile.desk_pos
-            assignments.append((aid, dx, dy, "idle", DESK_FACING[aid]))
+            assignments.append((aid, dx, dy, "idle", DESK_FACING.get(aid, (-1.0, 0.0))))
             self.set_bubble(aid, "Задача остановлена, возвращаюсь на место.", 4.5)
         self._move_group(assignments)
         await self.push_message(
@@ -833,24 +846,33 @@ class OfficeSimulation:
             st.idle_wait_until = 0.0
             st._pending_wait_sec = 0.0
             st._pending_bubble = ""
+            st.visual_state = "IDLE"
         try:
             await self.push_message("user", "Вы (Босс)", "Постановщик задачи", "#ffffff", task_text, "", "user")
 
             if target_agent != "all" and target_agent in self.agents:
                 st = self.agents[target_agent]
+                st.visual_state = "WORKING"
                 dx, dy = st.profile.desk_pos
-                self.move_agent(target_agent, dx, dy, "working", face_dir=DESK_FACING[target_agent], force=True)
+                self.move_agent(target_agent, dx, dy, "working", face_dir=DESK_FACING.get(target_agent, (-1.0, 0.0)), force=True)
                 self.set_bubble(target_agent, "Принял задачу, работаю…", 6.0)
                 await asyncio.sleep(1.5)
+                st.visual_state = "THINKING"
                 reply, used = await generate_agent_reply(st.profile, task_text)
+                st.visual_state = "COMPLETED"
                 self.set_bubble(target_agent, reply, 10.0)
                 await self.push_message(
                     st.profile.id, st.profile.name, st.profile.role, st.profile.color,
                     reply, used, "result"
                 )
+                await asyncio.sleep(2.0)
+                st.visual_state = "IDLE"
+                st.status = "idle"
                 return
 
-            # 1. Gather all agents at the conference table (atomic reservation avoids seat collisions)
+            # 1. Gather all 7 agents at the conference table
+            for aid, st in self.agents.items():
+                st.visual_state = "COLLABORATING"
             self._move_group([
                 (
                     aid,
@@ -866,69 +888,108 @@ class OfficeSimulation:
             ])
 
             lead = self.agents["lead"].profile
+            self.agents["lead"].visual_state = "THINKING"
             self.set_bubble("lead", "Команда, все в переговорную!", 6.0)
             await asyncio.sleep(2.2)
 
-            # 2. Lead breaks down the task and picks relevant specialists
+            # 2. Lead breaks down the task across all roles
             plan_prompt = (
                 f"Босс поставил задачу: «{task_text}».\n"
-                f"Кратко (3-4 пункта) распредели, что должны сделать: Вектор (кибербез/пентест), "
-                f"Нова (код/автоматизация), Пульс (продвижение/контент), Шейдер (Motion Graphics). "
-                f"Отмечай только тех, кто реально нужен для этой задачи."
+                f"Кратко (3-5 пунктов) распредели роли и план действий для специалистов AI-офиса:\n"
+                f"- Скаут: сбор данных, бенчмарки и конкурентный ресерч\n"
+                f"- Нова: архитектура, код, скрипты и автоматизация\n"
+                f"- Шейдер: Motion Graphics, UI-визуал, стилистика и анимация\n"
+                f"- Пульс: контент-стратегия, вирусные хуки и продвижение\n"
+                f"- Вектор: аудит безопасности, OWASP, харденинг\n"
+                f"- Квант: независимый QA-аудит, граничные условия, гейт качества\n"
+                f"Отвечай чётко и конкретно на русском языке."
             )
-            plan_text, lead_model = await generate_agent_reply(lead, plan_prompt, max_tokens=320)
+            plan_text, lead_model = await generate_agent_reply(lead, plan_prompt, max_tokens=360)
+            self.agents["lead"].visual_state = "WORKING"
             self.set_bubble("lead", plan_text, 9.0)
             await self.push_message(lead.id, lead.name, lead.role, lead.color, plan_text, lead_model, "chat")
 
-            # 3. Specialists go to their desks and execute in parallel
-            specialists = ["cybersec", "dev", "growth", "motion"]
+            # 3. Stage 1: Scout deep research
+            scout_st = self.agents["scout"]
+            scout_st.visual_state = "WORKING"
+            scout_dx, scout_dy = scout_st.profile.desk_pos
+            self.move_agent("scout", scout_dx, scout_dy, "working", face_dir=DESK_FACING.get("scout", (0.0, -1.0)), force=True)
+            self.set_bubble("scout", "Иду за стол: собираю факты, бенчмарки и ресерч…", 5.0)
+            await asyncio.sleep(1.2)
+
+            scout_prompt = (
+                f"Задача от босса: «{task_text}».\n"
+                f"План тимлида:\n{plan_text}\n\n"
+                f"Проведи глубокий ресерч и анализ предметной области ({scout_st.profile.specialty}). "
+                f"Дай проверенные факты, технические референсы, лучшие практики и бенчмарки, на которые команда будет опираться."
+            )
+            scout_st.visual_state = "THINKING"
+            scout_text, scout_mod = await generate_agent_reply(scout_st.profile, scout_prompt, max_tokens=420)
+            scout_st.visual_state = "COMPLETED"
+            self.set_bubble("scout", scout_text, 9.0)
+            await self.push_message(scout_st.profile.id, scout_st.profile.name, scout_st.profile.role, scout_st.profile.color, scout_text, scout_mod, "chat")
+
+            # 4. Stage 2: Core Specialists Execute (Nova dev, Shader motion/UI, Pulse growth)
+            core_specs = ["dev", "motion", "growth"]
+            for sid in core_specs:
+                self.agents[sid].visual_state = "WORKING"
             self._move_group([
                 (
                     sid,
                     self.agents[sid].profile.desk_pos[0],
                     self.agents[sid].profile.desk_pos[1],
                     "working",
-                    DESK_FACING[sid],
+                    DESK_FACING.get(sid, (1.0, 0.0)),
                 )
-                for sid in specialists
+                for sid in core_specs
             ])
-            for sid in specialists:
+            for sid in core_specs:
                 self.set_bubble(sid, "Иду за стол делать свою часть…", 5.0)
             await asyncio.sleep(1.5)
 
             async def run_spec(sid: str) -> tuple[str, str, str]:
                 prof = self.agents[sid].profile
+                st = self.agents[sid]
                 sp_prompt = (
                     f"Задача от босса: «{task_text}».\n"
                     f"План тимлида:\n{plan_text}\n\n"
+                    f"Ресерч Скаута:\n{scout_text[:600]}\n\n"
                     f"Дай конкретный, практический вклад именно по твоей специализации ({prof.specialty}). "
                     f"Если твоя область тут не нужна, ответь одной короткой строкой, что готов поддержать."
                 )
+                st.visual_state = "THINKING"
                 ans, mod = await generate_agent_reply(prof, sp_prompt)
+                st.visual_state = "COMPLETED"
                 self.set_bubble(sid, ans, 9.0)
                 await self.push_message(prof.id, prof.name, prof.role, prof.color, ans, mod, "chat")
                 return sid, prof.name, ans
 
-            spec_outputs = await asyncio.gather(*(run_spec(s) for s in specialists))
+            spec_outputs = await asyncio.gather(*(run_spec(s) for s in core_specs))
             ans_by_id = {sid: ans for sid, _, ans in spec_outputs}
-            results = [(name, ans) for _, name, ans in spec_outputs]
+            results = [("Ресерч Скаута", scout_text)] + [(name, ans) for _, name, ans in spec_outputs]
 
-            # 4. Agent-to-agent peer review & physical desk visits
+            # 5. Stage 3: Peer Reviews, Security Hardening & Independent QA Audit
+            # CyberSec (Vector) visits Dev (Nova) at Nova's desk
             vx, vy = COLLAB_VISIT_POS["dev"]
             dev_dx, dev_dy = self.agents["dev"].profile.desk_pos
             self.agents["cybersec"].collaborating_with = "dev"
             self.agents["dev"].collaborating_with = "cybersec"
+            self.agents["cybersec"].visual_state = "REVIEWING"
+            self.agents["dev"].visual_state = "COLLABORATING"
             self.move_agent(
                 "cybersec", vx, vy, "meeting",
                 face_dir=(float(dev_dx - vx), float(dev_dy - vy)),
                 force=True,
             )
-            self.set_bubble("cybersec", "Иду к Нове проверить безопасность кода…", 5.0)
+            self.set_bubble("cybersec", "Иду к Нове на аудит безопасности кода…", 5.0)
 
+            # Growth (Pulse) visits Motion (Shader) at Shader's desk
             gx, gy = COLLAB_VISIT_POS["motion"]
             mot_dx, mot_dy = self.agents["motion"].profile.desk_pos
             self.agents["growth"].collaborating_with = "motion"
             self.agents["motion"].collaborating_with = "growth"
+            self.agents["growth"].visual_state = "REVIEWING"
+            self.agents["motion"].visual_state = "COLLABORATING"
             self.move_agent(
                 "growth", gx, gy, "meeting",
                 face_dir=(float(mot_dx - gx), float(mot_dy - gy)),
@@ -936,69 +997,135 @@ class OfficeSimulation:
             )
             self.set_bubble("growth", "Иду к Шейдеру синхронизировать визуал и хуки…", 5.0)
 
+            # Quant (QA Auditor) sets up QA gate at desk
+            qx, qy = self.agents["quant"].profile.desk_pos
+            self.agents["quant"].visual_state = "REVIEWING"
+            self.move_agent(
+                "quant", qx, qy, "working",
+                face_dir=DESK_FACING.get("quant", (1.0, 0.0)),
+                force=True,
+            )
+            self.set_bubble("quant", "Запускаю независимый QA-аудит и верификацию решения…", 5.0)
+
             await asyncio.sleep(2.0)
 
-            async def run_peer_review(
-                reviewer_id: str,
-                target_id: str,
-                focus_hint: str,
-            ) -> tuple[str, str]:
-                rev_prof = self.agents[reviewer_id].profile
-                tgt_prof = self.agents[target_id].profile
-                tgt_draft = ans_by_id.get(target_id, "")
+            async def run_sec_review() -> tuple[str, str]:
+                rev_prof = self.agents["cybersec"].profile
+                tgt_prof = self.agents["dev"].profile
+                tgt_draft = ans_by_id.get("dev", "")
                 peer_prompt = (
                     f"Ты подошёл к рабочему столу коллеги {tgt_prof.name} ({tgt_prof.role}) по задаче «{task_text}».\n"
-                    f"Наработка коллеги:\n{tgt_draft[:600]}\n\n"
-                    f"Дай короткое, острое экспертное ревью (2-3 предложения) со стороны своей роли ({focus_hint}): "
-                    f"что усилить или исправить прямо сейчас."
+                    f"Решение разработчика:\n{tgt_draft[:700]}\n\n"
+                    f"Дай экспертное security-ревью (харденинг, OWASP, проверка API-ключей, валидация входных данных, уязвимости). "
+                    f"Укажи конкретные исправления."
                 )
-                rev_text, rev_mod = await generate_agent_reply(rev_prof, peer_prompt, max_tokens=220)
-                self.set_bubble(reviewer_id, f"@{tgt_prof.name}: {rev_text}", 8.0)
+                self.agents["cybersec"].visual_state = "THINKING"
+                rev_text, rev_mod = await generate_agent_reply(rev_prof, peer_prompt, max_tokens=260)
+                self.agents["cybersec"].visual_state = "COMPLETED"
+                self.set_bubble("cybersec", f"@{tgt_prof.name}: {rev_text}", 8.0)
                 await self.push_message(
                     rev_prof.id,
                     f"{rev_prof.name} → {tgt_prof.name}",
-                    f"Ревью ({rev_prof.role})",
+                    f"Security Ревью ({rev_prof.role})",
                     rev_prof.color,
                     rev_text,
                     rev_mod,
                     "chat",
                 )
-                return f"Ревью {rev_prof.name} для {tgt_prof.name}", rev_text
+                return f"Кибербез-ревью ({rev_prof.name})", rev_text
 
-            peer_reviews = await asyncio.gather(
-                run_peer_review("cybersec", "dev", "хардening, защита API и уязвимости"),
-                run_peer_review("growth", "motion", "удержание внимания, динамика первых 3 секунд и CTR"),
+            async def run_growth_review() -> tuple[str, str]:
+                rev_prof = self.agents["growth"].profile
+                tgt_prof = self.agents["motion"].profile
+                tgt_draft = ans_by_id.get("motion", "")
+                peer_prompt = (
+                    f"Ты подошёл к столу коллеги {tgt_prof.name} ({tgt_prof.role}) по задаче «{task_text}».\n"
+                    f"Визуальный концепт:\n{tgt_draft[:700]}\n\n"
+                    f"Дай обратную связь по удержанию аудитории, CTR и динамике первых секунд. "
+                    f"Как усилить вирусный эффект?"
+                )
+                self.agents["growth"].visual_state = "THINKING"
+                rev_text, rev_mod = await generate_agent_reply(rev_prof, peer_prompt, max_tokens=220)
+                self.agents["growth"].visual_state = "COMPLETED"
+                self.set_bubble("growth", f"@{tgt_prof.name}: {rev_text}", 8.0)
+                await self.push_message(
+                    rev_prof.id,
+                    f"{rev_prof.name} → {tgt_prof.name}",
+                    f"Контент-ревью ({rev_prof.role})",
+                    rev_prof.color,
+                    rev_text,
+                    rev_mod,
+                    "chat",
+                )
+                return f"Контент-ревью ({rev_prof.name})", rev_text
+
+            async def run_quant_audit() -> tuple[str, str]:
+                quant_prof = self.agents["quant"].profile
+                summary_draft = f"Dev:\n{ans_by_id.get('dev', '')[:400]}\n\nMotion:\n{ans_by_id.get('motion', '')[:300]}"
+                quant_prompt = (
+                    f"Ты Квант — независимый QA-аудитор. Проведи независимый аудит качества по задаче «{task_text}».\n"
+                    f"Наработки команды:\n{summary_draft}\n\n"
+                    f"Проверь граничные случаи, надежность, полноту выполнения требований и дай четкий вердикт QA-гейта: "
+                    f"что прошло проверку, какие есть риски и статус приемки (PASSED / REQUIRES_ATTENTION)."
+                )
+                self.agents["quant"].visual_state = "THINKING"
+                audit_text, audit_mod = await generate_agent_reply(quant_prof, quant_prompt, max_tokens=280)
+                self.agents["quant"].visual_state = "COMPLETED"
+                self.set_bubble("quant", audit_text, 8.0)
+                await self.push_message(
+                    quant_prof.id,
+                    f"{quant_prof.name} (QA Gate)",
+                    quant_prof.role,
+                    quant_prof.color,
+                    audit_text,
+                    audit_mod,
+                    "chat",
+                )
+                return f"QA-Аудит ({quant_prof.name})", audit_text
+
+            audit_reviews = await asyncio.gather(
+                run_sec_review(),
+                run_growth_review(),
+                run_quant_audit(),
             )
-            results.extend(peer_reviews)
+            results.extend(audit_reviews)
 
-            # Return visiting agents to their own desks
-            for sid in specialists:
-                self.agents[sid].collaborating_with = ""
+            # Return visiting agents to their desks
+            for aid in self.agents:
+                self.agents[aid].collaborating_with = ""
+                self.agents[aid].visual_state = "IDLE"
             self._move_group([
                 (
-                    sid,
-                    self.agents[sid].profile.desk_pos[0],
-                    self.agents[sid].profile.desk_pos[1],
+                    aid,
+                    self.agents[aid].profile.desk_pos[0],
+                    self.agents[aid].profile.desk_pos[1],
                     "idle",
-                    DESK_FACING[sid],
+                    DESK_FACING.get(aid, (-1.0, 0.0)),
                 )
-                for sid in specialists
+                for aid in self.agents
+                if aid != "lead"
             ])
 
-            # 5. Lead synthesizes final cohesive result
+            # 6. Lead synthesizes final comprehensive result
+            lead_st = self.agents["lead"]
             dx, dy = lead.desk_pos
-            self.move_agent("lead", dx, dy, "working", face_dir=DESK_FACING["lead"], force=True)
+            lead_st.visual_state = "THINKING"
+            self.move_agent("lead", dx, dy, "working", face_dir=DESK_FACING.get("lead", (-1.0, 0.0)), force=True)
             joined = "\n\n".join(f"### {name}:\n{ans}" for name, ans in results)
             final_prompt = (
                 f"Задача босса: «{task_text}».\n"
-                f"Наработки команды и взаимное ревью:\n{joined}\n\n"
-                f"Собери из этого чёткий, готовый к применению финальный ответ для босса (структурно, без воды)."
+                f"Наработки команды (ресерч Скаута, код Новы, визуал Шейдера, промо Пульса, аудит Вектора и QA Кванта):\n{joined}\n\n"
+                f"Собери из этого целостный, структурированный, готовый к применению финальный отчёт для босса."
             )
-            final_text, final_mod = await generate_agent_reply(lead, final_prompt, max_tokens=900)
+            final_text, final_mod = await generate_agent_reply(lead, final_prompt, max_tokens=950)
+            lead_st.visual_state = "COMPLETED"
             self.set_bubble("lead", "Готово! Итоговый отчёт в чате.", 10.0)
             await self.push_message(
                 lead.id, f"{lead.name} (Итог)", lead.role, lead.color, final_text, final_mod, "result"
             )
+            await asyncio.sleep(2.0)
+            lead_st.visual_state = "IDLE"
+            lead_st.status = "idle"
         except asyncio.CancelledError:
             raise
         finally:
@@ -1007,6 +1134,7 @@ class OfficeSimulation:
             self._active_task_handle = None
             for st in self.agents.values():
                 st.collaborating_with = ""
+                st.visual_state = "IDLE"
                 if st._post_walk_status in ("working", "meeting"):
                     st._post_walk_status = "idle"
                 if st.status in ("working", "meeting"):

@@ -4,3 +4,7 @@ compatibility_date = "2025-01-01"
 
 [ai]
 binding = "AI"
+
+[[kv_namespaces]]
+binding = "CHARON_KV"
+id = "09dc9d3dbb0a45859941d67b06f8a491"
