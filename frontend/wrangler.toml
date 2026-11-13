@@ -1,9 +1,6 @@
-﻿# Cloudflare Pages (static Vite build). Deploy: `npm run build && npx wrangler pages deploy`
-name = "charon-office"
-compatibility_date = "2025-01-01"
+﻿name = "charon-office"
 pages_build_output_dir = "./dist"
+compatibility_date = "2025-01-01"
 
-# VITE_* vars are baked in at BUILD time. Set them in the Pages dashboard
-# (Settings -> Variables, "Production" + "Preview"), not here:
-#   VITE_API_URL = https://your-backend.example.com
-#   VITE_WS_URL  = wss://your-backend.example.com/ws   (optional)
+[ai]
+binding = "AI"

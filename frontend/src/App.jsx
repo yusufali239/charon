@@ -3,7 +3,13 @@ import { Send, Settings, Zap, Shield, Code2, TrendingUp, Film, Copy, Check, Rota
 import OfficeScene from "./components/OfficeScene";
 import SettingsModal from "./components/SettingsModal";
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
+const DEFAULT_ORIGIN =
+  typeof window !== "undefined" &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? window.location.origin
+    : "http://127.0.0.1:8000";
+const API_BASE = (import.meta.env.VITE_API_URL || DEFAULT_ORIGIN).replace(/\/+$/, "");
 const WS_URL = (import.meta.env.VITE_WS_URL || `${API_BASE.replace(/^http/i, "ws")}/ws`).replace(/\/+$/, "");
 
 const CAMERA_PRESETS = [
@@ -218,21 +224,38 @@ export default function App() {
   useEffect(() => {
     let ws;
     let timer;
+    let pollTimer;
+    let wsOpen = false;
+
+    const applySnapshot = (data) => {
+      if (!data) return;
+      if (data.agents) setAgents(data.agents);
+      if (data.messages) setMessages(data.messages);
+      if (typeof data.economy_mode === "boolean") setEconomyMode(data.economy_mode);
+      if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
+      if (data.providers) setProviders(data.providers);
+      setConnected(true);
+    };
+
+    fetch(`${API_BASE}/api/state`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(applySnapshot)
+      .catch(() => {});
+
     const connect = () => {
       ws = new WebSocket(WS_URL);
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        wsOpen = true;
+        setConnected(true);
+      };
       ws.onclose = () => {
-        setConnected(false);
-        timer = setTimeout(connect, 2000);
+        wsOpen = false;
+        timer = setTimeout(connect, 2500);
       };
       ws.onmessage = (ev) => {
         const data = JSON.parse(ev.data);
         if (data.type === "state") {
-          setAgents(data.agents || []);
-          setMessages(data.messages || []);
-          setEconomyMode(Boolean(data.economy_mode));
-          setTaskRunning(Boolean(data.task_running));
-          setProviders(data.providers || {});
+          applySnapshot(data);
         } else if (data.type === "positions") {
           setAgents(data.agents || []);
           if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
@@ -245,8 +268,19 @@ export default function App() {
       };
     };
     connect();
+
+    pollTimer = setInterval(() => {
+      if (!wsOpen) {
+        fetch(`${API_BASE}/api/state`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then(applySnapshot)
+          .catch(() => setConnected(false));
+      }
+    }, 1200);
+
     return () => {
       clearTimeout(timer);
+      clearInterval(pollTimer);
       if (ws) ws.close();
     };
   }, []);
