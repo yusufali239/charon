@@ -4,18 +4,20 @@ import { X, Key, Cpu, CheckCircle2 } from "lucide-react";
 const RECOMMENDED_MODELS = {
   openrouter: [
     "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "moonshotai/kimi-k3.1-pro",
+    "qwen/qwen3.8-flash-next",
     "cohere/north-mini-code:free",
     "qwen/qwen3-235b-a22b:free",
     "nousresearch/hermes-3-llama-3.1-405b:free",
-    "deepseek/deepseek-chat-v3-0324:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
   ],
+  siliconflow: ["deepseek-ai/DeepSeek-V4.1-Flash", "Qwen/Qwen3-235B-A22B"],
+  zai: ["glm-5.3-flash", "glm-4.5-flash"],
   gemini: ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"],
   groq: [
     "openai/gpt-oss-120b",
+    "moonshotai/kimi-k2-instruct",
     "qwen/qwen3.8-27b",
     "llama-3.3-70b-versatile",
-    "qwen-qwq-32b",
   ],
   cerebras: [
     "qwen-3.8-27b",
@@ -33,6 +35,8 @@ export default function SettingsModal({ open, onClose, providers, agents, onSave
     groq_api_key: "",
     cerebras_api_key: "",
     deepseek_api_key: "",
+    siliconflow_api_key: "",
+    zai_api_key: "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -95,8 +99,10 @@ export default function SettingsModal({ open, onClose, providers, agents, onSave
             { field: "openrouter_api_key", name: "OpenRouter (:free + Uncensored)", statusKey: "openrouter", hint: "openrouter.ai/keys" },
             { field: "gemini_api_key", name: "Google AI Studio (Gemini Flash)", statusKey: "gemini", hint: "aistudio.google.com/apikey" },
             { field: "groq_api_key", name: "Groq (Быстрый бесплатный тир)", statusKey: "groq", hint: "console.groq.com/keys" },
-            { field: "cerebras_api_key", name: "Cerebras (Qwen 3 / Llama)", statusKey: "cerebras", hint: "cloud.cerebras.ai" },
+            { field: "cerebras_api_key", name: "Cerebras (Qwen 3.8 / GPT-OSS)", statusKey: "cerebras", hint: "cloud.cerebras.ai" },
             { field: "deepseek_api_key", name: "DeepSeek (V3 / Reasoner)", statusKey: "deepseek", hint: "platform.deepseek.com" },
+            { field: "siliconflow_api_key", name: "SiliconFlow (DeepSeek V4.1 Flash)", statusKey: "siliconflow", hint: "cloud.siliconflow.cn" },
+            { field: "zai_api_key", name: "Z.ai (GLM-5.3 Flash Free)", statusKey: "zai", hint: "z.ai / bigmodel" },
           ].map((item) => (
             <div key={item.field} style={{ display: "grid", gap: 4 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
@@ -180,6 +186,8 @@ export default function SettingsModal({ open, onClose, providers, agents, onSave
                   }}
                 >
                   <option value="openrouter">OpenRouter</option>
+                  <option value="siliconflow">SiliconFlow</option>
+                  <option value="zai">Z.ai (GLM)</option>
                   <option value="gemini">Gemini</option>
                   <option value="groq">Groq</option>
                   <option value="cerebras">Cerebras</option>

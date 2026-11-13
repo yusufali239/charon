@@ -18,6 +18,8 @@ class Settings:
         self.groq_api_key: str = os.getenv("GROQ_API_KEY", "").strip()
         self.cerebras_api_key: str = os.getenv("CEREBRAS_API_KEY", "").strip()
         self.deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        self.siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "").strip()
+        self.zai_api_key: str = os.getenv("ZAI_API_KEY", "").strip()
         self.ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434").strip()
         self.economy_mode: bool = True
         self.idle_chat_interval_sec: int = 75
@@ -29,6 +31,8 @@ class Settings:
             "groq_api_key": "GROQ_API_KEY",
             "cerebras_api_key": "CEREBRAS_API_KEY",
             "deepseek_api_key": "DEEPSEEK_API_KEY",
+            "siliconflow_api_key": "SILICONFLOW_API_KEY",
+            "zai_api_key": "ZAI_API_KEY",
             "ollama_url": "OLLAMA_URL",
         }
         for attr, env_name in mapping.items():
@@ -42,6 +46,8 @@ class Settings:
             f"GROQ_API_KEY={self.groq_api_key}",
             f"CEREBRAS_API_KEY={self.cerebras_api_key}",
             f"DEEPSEEK_API_KEY={self.deepseek_api_key}",
+            f"SILICONFLOW_API_KEY={self.siliconflow_api_key}",
+            f"ZAI_API_KEY={self.zai_api_key}",
             f"OLLAMA_URL={self.ollama_url}",
         ]
         ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -53,6 +59,8 @@ class Settings:
             "groq": bool(self.groq_api_key),
             "cerebras": bool(self.cerebras_api_key),
             "deepseek": bool(self.deepseek_api_key),
+            "siliconflow": bool(self.siliconflow_api_key),
+            "zai": bool(self.zai_api_key),
             "ollama": bool(self.ollama_url),
         }
 

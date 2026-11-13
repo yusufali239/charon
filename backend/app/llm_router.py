@@ -4,9 +4,11 @@ from .agents import AgentProfile
 
 DEFAULT_MODELS = {
     "openrouter": "qwen/qwen3-235b-a22b:free",
-    "gemini": "gemini-2.5-flash",
-    "groq": "llama-3.3-70b-versatile",
-    "cerebras": "qwen-3-32b",
+    "gemini": "gemini-3-flash-preview",
+    "groq": "openai/gpt-oss-120b",
+    "cerebras": "qwen-3.8-27b",
+    "siliconflow": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "zai": "glm-5.3-flash",
     "ollama": "qwen2.5:7b",
     "deepseek": "deepseek-chat",
 }
@@ -164,6 +166,28 @@ async def _call_provider(
             max_tokens,
         )
         return text, f"deepseek/{model}"
+
+    if provider == "siliconflow" and settings.siliconflow_api_key:
+        text = await _call_openai_compat(
+            "https://api.siliconflow.cn/v1/chat/completions",
+            settings.siliconflow_api_key,
+            model,
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        )
+        return text, f"siliconflow/{model}"
+
+    if provider == "zai" and settings.zai_api_key:
+        text = await _call_openai_compat(
+            "https://api.z.ai/api/paas/v4/chat/completions",
+            settings.zai_api_key,
+            model,
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        )
+        return text, f"zai/{model}"
 
     if provider == "ollama" and settings.ollama_url:
         return await _call_ollama(

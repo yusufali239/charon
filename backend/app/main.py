@@ -46,6 +46,8 @@ class SettingsRequest(BaseModel):
     cerebras_api_key: str | None = None
     ollama_url: str | None = None
     deepseek_api_key: str | None = None
+    siliconflow_api_key: str | None = None
+    zai_api_key: str | None = None
     economy_mode: bool | None = None
 
 
