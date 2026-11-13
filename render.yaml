@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: charon-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://charon-office.pages.dev,http://127.0.0.1:5173,http://localhost:5173
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: SILICONFLOW_API_KEY
+        sync: false
+      - key: ZAI_API_KEY
+        sync: false
