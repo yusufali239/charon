@@ -514,6 +514,8 @@ body,
   display: flex;
   align-items: center;
   gap: 3px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   padding: 2px 0;
   scrollbar-width: none;
@@ -2334,6 +2336,9 @@ body,
   }
 
   .v2-top-navbar {
+    height: auto !important;
+    max-width: 100vw;
+    box-sizing: border-box;
     flex-wrap: wrap;
     gap: 8px;
     padding: 8px 12px;
@@ -2341,6 +2346,8 @@ body,
 
   .v2-nav-tabs-wrapper {
     order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
     width: 100%;
     overflow-x: auto;
     padding-bottom: 2px;
