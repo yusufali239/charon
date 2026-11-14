@@ -51,12 +51,13 @@ const NAV_TABS = [
   { id: "office", label: "3D Офис", icon: Eye, is3d: true },
   { id: "overview", label: "Обзор", icon: Activity },
   { id: "tasks", label: "Задачи", icon: Workflow, hasBadge: true },
+  { id: "extensions", label: "Терминал & Браузер", icon: Terminal },
   { id: "agents", label: "Агенты", icon: Users },
   { id: "models", label: "Модели", icon: Cpu },
   { id: "providers", label: "Провайдеры", icon: Key },
   { id: "workflow", label: "Пайплайн", icon: Workflow },
   { id: "memory", label: "Память", icon: Database },
-  { id: "logs", label: "Логи", icon: Terminal },
+  { id: "logs", label: "Логи", icon: Code2 },
   { id: "analytics", label: "Квоты", icon: BarChart3 },
   { id: "settings", label: "Настройки", icon: Sliders },
 ];
@@ -312,6 +313,9 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [logs, setLogs] = useState([]);
   const [decisions, setDecisions] = useState([]);
+  const [terminalHistory, setTerminalHistory] = useState([]);
+  const [browserSessions, setBrowserSessions] = useState([]);
+  const [reconReports, setReconReports] = useState([]);
   const [pendingApproval, setPendingApproval] = useState(null);
   const [autoRouting, setAutoRouting] = useState(true);
   const [humanControlGates, setHumanControlGates] = useState({
@@ -467,6 +471,15 @@ export default function App() {
       if (data.files) setFiles((prev) => (prev.length === data.files.length ? prev : data.files));
       if (data.logs) setLogs((prev) => (prev.length === data.logs.length ? prev : data.logs));
       if (data.decisions) setDecisions((prev) => (prev.length === data.decisions.length ? prev : data.decisions));
+      if (data.terminal_history) {
+        setTerminalHistory((prev) => (prev.length === data.terminal_history.length ? prev : data.terminal_history));
+      }
+      if (data.browser_sessions) {
+        setBrowserSessions((prev) => (prev.length === data.browser_sessions.length ? prev : data.browser_sessions));
+      }
+      if (data.recon_reports) {
+        setReconReports((prev) => (prev.length === data.recon_reports.length ? prev : data.recon_reports));
+      }
       if (data.pending_approval !== undefined) setPendingApproval(data.pending_approval);
       setConnected(true);
     };
@@ -632,10 +645,28 @@ export default function App() {
           if (nextLogs) setLogs((prev) => (prev.length === nextLogs.length ? prev : nextLogs));
           const nextDec = d.decisions || (d.memory && d.memory.decisions);
           if (nextDec) setDecisions((prev) => (prev.length === nextDec.length ? prev : nextDec));
+          if (d.terminal_history) setTerminalHistory(d.terminal_history);
+          if (d.browser_sessions) setBrowserSessions(d.browser_sessions);
+          if (d.recon_reports) setReconReports(d.recon_reports);
           if (d.pending_approval !== undefined) setPendingApproval(d.pending_approval);
         }
       })
       .catch(() => {});
+  };
+
+  const runExtension = async (payload) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/extensions/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      refreshState();
+      return data;
+    } catch {
+      return null;
+    }
   };
 
   const sendTask = async (textToSend, customTarget) => {
@@ -1191,6 +1222,10 @@ export default function App() {
             files={files}
             logs={logs}
             decisions={decisions}
+            terminalHistory={terminalHistory}
+            browserSessions={browserSessions}
+            reconReports={reconReports}
+            onRunExtension={runExtension}
             pendingApproval={pendingApproval}
             taskRunning={taskRunning}
             economyMode={economyMode}

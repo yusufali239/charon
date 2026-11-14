@@ -27,6 +27,9 @@ import {
   Play,
   ShieldCheck,
   Workflow,
+  Terminal,
+  Code2,
+  Globe,
 } from "lucide-react";
 
 // Default 7 agents meta if not fully populated
@@ -170,6 +173,10 @@ export default function CommandDashboard({
   files = [],
   logs = [],
   decisions = [],
+  terminalHistory = [],
+  browserSessions = [],
+  reconReports = [],
+  onRunExtension,
   pendingApproval = null,
   taskRunning = false,
   economyMode = true,
@@ -199,6 +206,70 @@ export default function CommandDashboard({
   const [taskPrompt, setTaskPrompt] = useState("");
   const [targetAgent, setTargetAgent] = useState("all");
   const [activeWorkflowStep, setActiveWorkflowStep] = useState(null);
+  const [previewMode, setPreviewMode] = useState(false);
+
+  // Interactive Extensions State (Cloud Terminal, Headless Browser, Cyber-Recon)
+  const [extSubTab, setExtSubTab] = useState("terminal");
+  const [termLang, setTermLang] = useState("python");
+  const [termAgent, setTermAgent] = useState("dev");
+  const [termFilename, setTermFilename] = useState("src/benchmark.py");
+  const [termCode, setTermCode] = useState(
+    `import sys, platform, hashlib, time\n\nt0 = time.time()\nprint(f"[CHARON CLOUD TERMINAL] Python {platform.python_version()} on {sys.platform}")\nfor name in ["Atlas", "Vector", "Nova", "Pulse", "Shader", "Scout", "Quant"]:\n    sig = hashlib.sha256(name.encode()).hexdigest()[:12]\n    print(f" -> Agent {name:<7} | token_sig={sig} | status=READY")\nprint(f"Done in {(time.time() - t0)*1000:.2f} ms")`
+  );
+  const [termRunning, setTermRunning] = useState(false);
+
+  const [browserUrl, setBrowserUrl] = useState("https://news.ycombinator.com");
+  const [browserAgent, setBrowserAgent] = useState("scout");
+  const [browserRunning, setBrowserRunning] = useState(false);
+
+  const [reconTarget, setReconTarget] = useState("charon-office.pages.dev");
+  const [reconRunning, setReconRunning] = useState(false);
+
+  const handleRunTerminal = async (customLang, customCode, customFile, customAgent) => {
+    if (termRunning) return;
+    setTermRunning(true);
+    try {
+      await onRunExtension?.({
+        action: "terminal",
+        language: customLang || termLang,
+        code: customCode ?? termCode,
+        filename: customFile || termFilename,
+        agent: customAgent || termAgent,
+      });
+    } finally {
+      setTermRunning(false);
+    }
+  };
+
+  const handleRunBrowser = async (e) => {
+    if (e) e.preventDefault();
+    if (browserRunning || !browserUrl.trim()) return;
+    setBrowserRunning(true);
+    try {
+      await onRunExtension?.({
+        action: "browser",
+        url: browserUrl.trim(),
+        agent: browserAgent,
+      });
+    } finally {
+      setBrowserRunning(false);
+    }
+  };
+
+  const handleRunRecon = async (e) => {
+    if (e) e.preventDefault();
+    if (reconRunning || !reconTarget.trim()) return;
+    setReconRunning(true);
+    try {
+      await onRunExtension?.({
+        action: "recon",
+        target: reconTarget.trim(),
+        agent: "cybersec",
+      });
+    } finally {
+      setReconRunning(false);
+    }
+  };
 
   // Merge provided agents with default agents
   const mergedAgents = useMemo(() => {
@@ -1535,6 +1606,386 @@ if __name__ == "__main__":
           </div>
         )}
 
+        {/* ---------------- 7B. EXTENSIONS: CLOUD TERMINAL, BROWSER & CYBER-RECON ---------------- */}
+        {activeTab === "extensions" && (
+          <div className="v2-section-fade">
+            <div className="v2-section-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+              <div>
+                <h1 className="v2-page-title">Терминал, Браузер & Боевые Extensions Агентов</h1>
+                <p className="v2-page-sub">
+                  Реальная среда исполнения в облаке: Cloud Terminal (Python/Node/Bash), Headless Browser со скриншотами и Cyber-Recon (DNS/SSL/OWASP)
+                </p>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[
+                  { id: "terminal", label: `💻 Cloud Terminal (${terminalHistory.length})` },
+                  { id: "browser", label: `🌐 Браузер Агентов (${browserSessions.length})` },
+                  { id: "recon", label: `🛡 Cyber-Recon (${reconReports.length})` },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setExtSubTab(t.id)}
+                    style={{
+                      background: extSubTab === t.id ? "#0284c7" : "#0f172a",
+                      color: extSubTab === t.id ? "#fff" : "#cbd5e1",
+                      border: `1px solid ${extSubTab === t.id ? "#38bdf8" : "rgba(148,163,184,0.2)"}`,
+                      borderRadius: 10,
+                      padding: "8px 14px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* SUB-TAB 1: CLOUD TERMINAL */}
+            {extSubTab === "terminal" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }} className="v2-settings-grid">
+                <div className="v2-card" style={{ marginBottom: 0 }}>
+                  <div className="v2-card-title-row">
+                    <div className="v2-card-title">
+                      <Terminal size={18} color="#22c55e" />
+                      <span>Запуск кода в Облачном Терминале (Wandbox / Worker Runtime)</span>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                    <select
+                      value={termLang}
+                      onChange={(e) => {
+                        const nl = e.target.value;
+                        setTermLang(nl);
+                        if (nl === "javascript") {
+                          setTermFilename("src/audit.js");
+                          setTermCode(`const crypto = require("crypto");\nconsole.log("[CHARON NODE RUNTIME]", process.version);\nconst agents = ["Atlas", "Vector", "Nova", "Pulse", "Shader", "Scout", "Quant"];\nconsole.log("Active Fleet:", agents.join(" -> "));`);
+                        } else if (nl === "bash") {
+                          setTermFilename("scripts/check.sh");
+                          setTermCode(`uname -a\necho "[CHARON BASH SHELL] Checking environment..."\ndate -u`);
+                        } else {
+                          setTermFilename("src/benchmark.py");
+                        }
+                      }}
+                      className="v2-log-agent-select"
+                    >
+                      <option value="python">Python 3.12 (cpython)</option>
+                      <option value="javascript">Node.js 20 (javascript)</option>
+                      <option value="bash">Bash Shell</option>
+                    </select>
+
+                    <select
+                      value={termAgent}
+                      onChange={(e) => setTermAgent(e.target.value)}
+                      className="v2-log-agent-select"
+                    >
+                      <option value="dev">Исполнитель: Нова (Dev)</option>
+                      <option value="cybersec">Исполнитель: Вектор (Sec)</option>
+                      <option value="quant">Исполнитель: Квант (QA)</option>
+                    </select>
+
+                    <input
+                      value={termFilename}
+                      onChange={(e) => setTermFilename(e.target.value)}
+                      placeholder="src/script.py"
+                      style={{
+                        flex: 1,
+                        background: "#020617",
+                        border: "1px solid rgba(148,163,184,0.2)",
+                        color: "#f8fafc",
+                        borderRadius: 8,
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontFamily: "monospace",
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      className="v2-btn-primary"
+                      disabled={termRunning}
+                      onClick={() => handleRunTerminal()}
+                    >
+                      <Play size={14} />
+                      {termRunning ? "Выполняется…" : "Запустить"}
+                    </button>
+                  </div>
+
+                  <textarea
+                    value={termCode}
+                    onChange={(e) => setTermCode(e.target.value)}
+                    rows={12}
+                    style={{
+                      width: "100%",
+                      boxSizing: "border-box",
+                      background: "#020617",
+                      color: "#a5f3fc",
+                      border: "1px solid rgba(56,189,248,0.22)",
+                      borderRadius: 10,
+                      padding: 12,
+                      fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      resize: "vertical",
+                    }}
+                  />
+                </div>
+
+                <div className="v2-card" style={{ marginBottom: 0, display: "flex", flexDirection: "column" }}>
+                  <div className="v2-card-title-row">
+                    <div className="v2-card-title">
+                      <Code2 size={18} color="#38bdf8" />
+                      <span>Вывод Терминала (stdout / stderr / exit_code)</span>
+                    </div>
+                  </div>
+                  <div className="v2-logs-console" style={{ height: 320, flex: 1 }}>
+                    {terminalHistory.length === 0 ? (
+                      <div style={{ color: "#64748b", padding: 16 }}>
+                        Нажмите «Запустить» слева или запустите задачу для команды — Нова автоматически прогонит сгенерированный код через терминал.
+                      </div>
+                    ) : (
+                      terminalHistory
+                        .slice()
+                        .reverse()
+                        .map((item) => (
+                          <div
+                            key={item.id}
+                            style={{
+                              background: "#09101f",
+                              border: `1px solid ${item.exit_code === 0 ? "rgba(34,197,94,0.3)" : "rgba(244,63,94,0.4)"}`,
+                              borderRadius: 8,
+                              padding: 10,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 11 }}>
+                              <span style={{ color: "#4ade80", fontWeight: 700 }}>{item.command}</span>
+                              <span style={{ color: "#94a3b8" }}>
+                                {item.engine} · exit={item.exit_code} · {item.duration_ms}ms · {item.ts}
+                              </span>
+                            </div>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", color: "#e2e8f0", fontSize: 11.5 }}>
+                              {item.stdout}
+                            </pre>
+                            {item.stderr && (
+                              <pre style={{ margin: "6px 0 0", whiteSpace: "pre-wrap", color: "#fca5a5", fontSize: 11 }}>
+                                {item.stderr}
+                              </pre>
+                            )}
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 2: HEADLESS BROWSER */}
+            {extSubTab === "browser" && (
+              <div className="v2-card">
+                <div className="v2-card-title-row">
+                  <div className="v2-card-title">
+                    <Globe size={18} color="#06b6d4" />
+                    <span>Headless Browser Агентов (Рендер страниц, Скриншоты, HTTP-заголовки и Ссылки)</span>
+                  </div>
+                </div>
+                <form onSubmit={handleRunBrowser} style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                  <select
+                    value={browserAgent}
+                    onChange={(e) => setBrowserAgent(e.target.value)}
+                    className="v2-log-agent-select"
+                  >
+                    <option value="scout">Агент: Скаут (Research)</option>
+                    <option value="growth">Агент: Пульс (SEO / Growth)</option>
+                    <option value="cybersec">Агент: Вектор (Sec Audit)</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={browserUrl}
+                    onChange={(e) => setBrowserUrl(e.target.value)}
+                    placeholder="Введите URL сайта (например https://news.ycombinator.com или https://cloudflare.com)..."
+                    style={{
+                      flex: 1,
+                      minWidth: 240,
+                      background: "#020617",
+                      border: "1px solid rgba(56,189,248,0.28)",
+                      color: "#f8fafc",
+                      borderRadius: 10,
+                      padding: "8px 14px",
+                      fontSize: 13,
+                    }}
+                  />
+                  <button type="submit" className="v2-btn-primary" disabled={browserRunning}>
+                    <Globe size={15} />
+                    {browserRunning ? "Загрузка и скриншот…" : "Открыть в Браузере"}
+                  </button>
+                </form>
+
+                {browserSessions.length === 0 ? (
+                  <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>
+                    Введите любой URL выше и нажмите «Открыть в Браузере» — агент зайдёт на страницу, снимет живой скриншот, проверит заголовки безопасности и извлечёт контент.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: 16 }}>
+                    {browserSessions
+                      .slice()
+                      .reverse()
+                      .map((sess) => (
+                        <div
+                          key={sess.id}
+                          style={{
+                            background: "#020617",
+                            border: "1px solid rgba(56,189,248,0.22)",
+                            borderRadius: 12,
+                            overflow: "hidden",
+                            display: "flex",
+                            flexDirection: "column",
+                          }}
+                        >
+                          {sess.screenshot_url && (
+                            <div style={{ position: "relative", height: 210, background: "#091326", borderBottom: "1px solid rgba(148,163,184,0.15)" }}>
+                              <img
+                                src={sess.screenshot_url}
+                                alt={sess.title}
+                                loading="lazy"
+                                style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "top" }}
+                              />
+                              <span
+                                style={{
+                                  position: "absolute",
+                                  top: 8,
+                                  right: 8,
+                                  background: "rgba(2,6,23,0.88)",
+                                  color: "#38bdf8",
+                                  border: "1px solid rgba(56,189,248,0.4)",
+                                  borderRadius: 6,
+                                  padding: "2px 8px",
+                                  fontSize: 10.5,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                HTTP {sess.status || 200} · {sess.duration_ms}ms
+                              </span>
+                            </div>
+                          )}
+                          <div style={{ padding: 14 }}>
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#f8fafc", marginBottom: 4 }}>
+                              {sess.title}
+                            </div>
+                            <div style={{ fontSize: 11, color: "#38bdf8", marginBottom: 8, wordBreak: "break-all" }}>
+                              {sess.url}
+                            </div>
+                            {sess.headers && (
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                                <span className="v2-log-tool-pill">Server: {sess.headers.server || "hidden"}</span>
+                                <span className="v2-log-tool-pill">CSP: {sess.headers.csp || "MISSING"}</span>
+                                <span className="v2-log-tool-pill">HSTS: {sess.headers.hsts || "MISSING"}</span>
+                                <span className="v2-log-tool-pill">XFO: {sess.headers.x_frame_options || "MISSING"}</span>
+                              </div>
+                            )}
+                            <div style={{ fontSize: 11.5, color: "#94a3b8", lineHeight: 1.45, maxHeight: 110, overflowY: "auto" }}>
+                              {sess.content_preview || sess.description || "Контент страницы извлечён."}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-TAB 3: CYBER-RECON */}
+            {extSubTab === "recon" && (
+              <div className="v2-card">
+                <div className="v2-card-title-row">
+                  <div className="v2-card-title">
+                    <Shield size={18} color="#f43f5e" />
+                    <span>Вектор Cyber-Recon (Cloudflare DoH DNS, crt.sh SSL Subdomains & OWASP Headers)</span>
+                  </div>
+                </div>
+                <form onSubmit={handleRunRecon} style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                  <input
+                    type="text"
+                    value={reconTarget}
+                    onChange={(e) => setReconTarget(e.target.value)}
+                    placeholder="Домен для разведки (например charon-office.pages.dev или cloudflare.com)..."
+                    style={{
+                      flex: 1,
+                      minWidth: 240,
+                      background: "#020617",
+                      border: "1px solid rgba(244,63,94,0.35)",
+                      color: "#f8fafc",
+                      borderRadius: 10,
+                      padding: "8px 14px",
+                      fontSize: 13,
+                    }}
+                  />
+                  <button type="submit" className="v2-btn-primary" disabled={reconRunning}>
+                    <Shield size={15} />
+                    {reconRunning ? "Сканирую DNS & SSL…" : "Запустить Cyber-Recon"}
+                  </button>
+                </form>
+
+                {reconReports.length === 0 ? (
+                  <div style={{ color: "#64748b", padding: 24, textAlign: "center" }}>
+                    Нажмите «Запустить Cyber-Recon» — Вектор соберёт реальные DNS-записи (A, MX, TXT/SPF), поддомены из Certificate Transparency (`crt.sh`) и заголовки безопасности.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {reconReports
+                      .slice()
+                      .reverse()
+                      .map((rep) => (
+                        <div
+                          key={rep.id}
+                          style={{
+                            background: "#020617",
+                            border: "1px solid rgba(244,63,94,0.28)",
+                            borderRadius: 12,
+                            padding: 14,
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                            <strong style={{ color: "#f43f5e", fontSize: 13.5 }}>Цель: {rep.target}</strong>
+                            <span style={{ color: "#64748b", fontSize: 11 }}>{rep.duration_ms}ms · {rep.ts}</span>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, fontSize: 11.5 }}>
+                            <div>
+                              <div style={{ color: "#38bdf8", fontWeight: 700, marginBottom: 4 }}>DNS A / IPv4:</div>
+                              <div style={{ color: "#cbd5e1", fontFamily: "monospace" }}>
+                                {(rep.dns_a || []).join(", ") || "нет записей"}
+                              </div>
+                              <div style={{ color: "#38bdf8", fontWeight: 700, marginTop: 8, marginBottom: 4 }}>DNS MX:</div>
+                              <div style={{ color: "#cbd5e1", fontFamily: "monospace" }}>
+                                {(rep.dns_mx || []).join(", ") || "нет записей"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#a855f7", fontWeight: 700, marginBottom: 4 }}>
+                                Поддомены (crt.sh SSL):
+                              </div>
+                              <div style={{ color: "#cbd5e1", fontFamily: "monospace", wordBreak: "break-all" }}>
+                                {(rep.subdomains || []).join(", ") || "не обнаружено"}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ color: "#22c55e", fontWeight: 700, marginBottom: 4 }}>Security Headers:</div>
+                              <pre style={{ margin: 0, color: "#cbd5e1", fontSize: 10.5, whiteSpace: "pre-wrap" }}>
+                                {JSON.stringify(rep.security_headers || {}, null, 2)}
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ---------------- 8. MEMORY & VIRTUAL FILES ---------------- */}
         {activeTab === "memory" && (
           <div className="v2-section-fade">
@@ -1604,6 +2055,46 @@ if __name__ == "__main__":
                         <span className="v2-viewer-lang">({currentViewingFile.language})</span>
                       </div>
                       <div className="v2-viewer-actions">
+                        {["python", "py", "javascript", "js", "bash", "sh"].includes(
+                          (currentViewingFile.language || "").toLowerCase()
+                        ) && (
+                          <button
+                            className="v2-btn-viewer"
+                            style={{ borderColor: "#22c55e", color: "#4ade80" }}
+                            onClick={async () => {
+                              setTermLang(
+                                ["javascript", "js"].includes((currentViewingFile.language || "").toLowerCase())
+                                  ? "javascript"
+                                  : ["bash", "sh"].includes((currentViewingFile.language || "").toLowerCase())
+                                  ? "bash"
+                                  : "python"
+                              );
+                              setTermFilename(currentViewingFile.name);
+                              setTermCode(currentViewingFile.content);
+                              setActiveTab("extensions");
+                              setExtSubTab("terminal");
+                              await handleRunTerminal(
+                                currentViewingFile.language,
+                                currentViewingFile.content,
+                                currentViewingFile.name,
+                                "dev"
+                              );
+                            }}
+                          >
+                            <Play size={14} color="#22c55e" />
+                            <span>Запустить в Терминале</span>
+                          </button>
+                        )}
+                        {["svg", "html"].includes((currentViewingFile.language || "").toLowerCase()) && (
+                          <button
+                            className="v2-btn-viewer"
+                            style={{ borderColor: "#a855f7", color: "#d8b4fe" }}
+                            onClick={() => setPreviewMode((p) => !p)}
+                          >
+                            <Eye size={14} color="#a855f7" />
+                            <span>{previewMode ? "Показать код" : "Live Preview"}</span>
+                          </button>
+                        )}
                         <button
                           className="v2-btn-viewer"
                           onClick={() => handleCopyCode(currentViewingFile.content)}
@@ -1621,9 +2112,22 @@ if __name__ == "__main__":
                       </div>
                     </div>
                     <div className="v2-code-body">
-                      <pre>
-                        <code>{currentViewingFile.content}</code>
-                      </pre>
+                      {previewMode && ["svg", "html"].includes((currentViewingFile.language || "").toLowerCase()) ? (
+                        <iframe
+                          title="Live Sandbox Preview"
+                          sandbox="allow-scripts"
+                          srcDoc={
+                            currentViewingFile.language === "svg"
+                              ? `<!DOCTYPE html><html><body style="margin:0;background:#070b14;display:flex;align-items:center;justify-content:center;height:100vh;">${currentViewingFile.content}</body></html>`
+                              : currentViewingFile.content
+                          }
+                          style={{ width: "100%", height: "100%", minHeight: 420, border: "none", borderRadius: 8, background: "#070b14" }}
+                        />
+                      ) : (
+                        <pre>
+                          <code>{currentViewingFile.content}</code>
+                        </pre>
+                      )}
                     </div>
                   </>
                 ) : (
