@@ -1411,6 +1411,17 @@ function parseQuantVerdict(text) {
 // Grid Pathfinding & 3D Office Simulation
 // ============================================================================
 
+const ASTAR_DIRS = [
+  [1, 0, 1],
+  [-1, 0, 1],
+  [0, 1, 1],
+  [0, -1, 1],
+  [1, 1, 1.414],
+  [1, -1, 1.414],
+  [-1, 1, 1.414],
+  [-1, -1, 1.414],
+];
+
 function astar(start, goal, occupiedSet) {
   if (start[0] === goal[0] && start[1] === goal[1]) return [];
   const key = (x, y) => `${x},${y}`;
@@ -1432,19 +1443,26 @@ function astar(start, goal, occupiedSet) {
       path.reverse();
       return path;
     }
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (const [dx, dy, baseCost] of ASTAR_DIRS) {
       const nx = cur.x + dx;
       const ny = cur.y + dy;
       if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
+      // Prevent corner clipping on diagonal movement
+      if (dx !== 0 && dy !== 0) {
+        if (BLOCKED.has(key(cur.x + dx, cur.y)) || BLOCKED.has(key(cur.x, cur.y + dy))) {
+          continue;
+        }
+      }
       const nk = key(nx, ny);
       const isGoal = nx === goal[0] && ny === goal[1];
       if (BLOCKED.has(nk) && !isGoal) continue;
       if (occupiedSet && occupiedSet.has(nk) && !isGoal) continue;
-      const tg = (gScore.get(key(cur.x, cur.y)) ?? 9999) + 1;
+      const borderPenalty = nx === 0 || nx === GRID_W - 1 || ny === 0 || ny === GRID_H - 1 ? 0.35 : 0;
+      const tg = (gScore.get(key(cur.x, cur.y)) ?? 9999) + baseCost + borderPenalty;
       if (tg < (gScore.get(nk) ?? 9999)) {
         cameFrom.set(nk, key(cur.x, cur.y));
         gScore.set(nk, tg);
-        const h = Math.abs(goal[0] - nx) + Math.abs(goal[1] - ny);
+        const h = Math.hypot(goal[0] - nx, goal[1] - ny);
         open.push({ x: nx, y: ny, g: tg, f: tg + h });
       }
     }
@@ -1491,6 +1509,10 @@ function serializeAgent(st) {
     fallback_models: chain.map(([p, m]) => `${p}/${m}`),
     x: Number(st.x.toFixed(3)),
     y: Number(st.y.toFixed(3)),
+    target_x: st.target_x ?? Math.round(st.x),
+    target_y: st.target_y ?? Math.round(st.y),
+    look_target: st.look_target || null,
+    path: Array.isArray(st.path) ? st.path.slice(0, 16) : [],
     facing: Number((st.facing || 0).toFixed(3)),
     status: st.status,
     visual_state: st.visual_state || mapStatusToVisual(st.status),
@@ -1593,32 +1615,40 @@ function moveAgent(id, gx, gy, postStatus = "idle", lookAt = null, postVisualSta
 
 function stepSimulation() {
   const now = Date.now();
-  const speed = 0.24;
+  const rawDt = state.lastStepAt ? (now - state.lastStepAt) / 1000 : 0.14;
+  state.lastStepAt = now;
+  const dt = Math.min(0.45, Math.max(0.05, rawDt));
+  const stepBudget = 2.85 * dt;
   let changed = false;
 
   for (const st of Object.values(state.agents)) {
     if (st.path && st.path.length > 0) {
-      const [nx, ny] = st.path[0];
-      const dx = nx - st.x;
-      const dy = ny - st.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 0.001) {
-        st.facing = Math.atan2(dx, dy);
-      }
-      if (dist <= speed) {
-        st.x = nx;
-        st.y = ny;
-        st.path.shift();
-        if (st.path.length === 0) {
-          st.status = st.post_status || "idle";
-          st.visual_state = st.post_visual_state || mapStatusToVisual(st.status);
-          if (st.look_target) {
-            st.facing = Math.atan2(st.look_target[0] - st.x, st.look_target[1] - st.y);
-          }
+      let rem = stepBudget;
+      while (rem > 0.0001 && st.path.length > 0) {
+        const [nx, ny] = st.path[0];
+        const dx = nx - st.x;
+        const dy = ny - st.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0.001) {
+          st.facing = Math.atan2(dx, dy);
         }
-      } else {
-        st.x += (dx / dist) * speed;
-        st.y += (dy / dist) * speed;
+        if (dist <= rem) {
+          st.x = nx;
+          st.y = ny;
+          rem -= dist;
+          st.path.shift();
+          if (st.path.length === 0) {
+            st.status = st.post_status || "idle";
+            st.visual_state = st.post_visual_state || mapStatusToVisual(st.status);
+            if (st.look_target) {
+              st.facing = Math.atan2(st.look_target[0] - st.x, st.look_target[1] - st.y);
+            }
+          }
+        } else {
+          st.x += (dx / dist) * rem;
+          st.y += (dy / dist) * rem;
+          rem = 0;
+        }
       }
       changed = true;
     }

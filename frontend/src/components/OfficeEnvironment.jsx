@@ -960,7 +960,8 @@ function BackWallDashboard({ agents, taskRunning }) {
 
   useFrame(({ clock }, delta) => {
     accRef.current += delta;
-    if (accRef.current < 0.12) return; // ~8.3 fps canvas redraw = negligible CPU cost
+    const interval = runningRef.current ? 0.14 : 0.45;
+    if (accRef.current < interval) return; // throttled in standby/economy mode
     accRef.current = 0;
 
     const ctx = dashCtx;

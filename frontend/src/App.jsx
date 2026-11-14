@@ -26,6 +26,7 @@ import {
   Sliders,
   AlertTriangle,
   CheckCircle2,
+  ArrowDown,
 } from "lucide-react";
 import OfficeScene from "./components/OfficeScene";
 import SettingsModal from "./components/SettingsModal";
@@ -330,6 +331,84 @@ export default function App() {
   const [activePreset, setActivePreset] = useState("overview");
 
   const chatEndRef = useRef(null);
+  const chatListRef = useRef(null);
+  const isNearBottomRef = useRef(true);
+  const savedScrollTopRef = useRef(0);
+  const prevFilteredInfoRef = useRef({ count: 0, lastId: "", lastLen: 0, filter: "all" });
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const updateAgentsDedup = useCallback((incoming) => {
+    if (!Array.isArray(incoming)) return;
+    setAgents((prev) => {
+      if (prev.length !== incoming.length) return incoming;
+      for (let i = 0; i < prev.length; i++) {
+        const a = prev[i];
+        const b = incoming[i];
+        if (
+          a.id !== b.id ||
+          a.status !== b.status ||
+          a.visual_state !== b.visual_state ||
+          a.bubble !== b.bubble ||
+          a.collaborating_with !== b.collaborating_with ||
+          a.provider !== b.provider ||
+          a.model !== b.model ||
+          a.target_x !== b.target_x ||
+          a.target_y !== b.target_y ||
+          Math.abs((a.x || 0) - (b.x || 0)) > 0.01 ||
+          Math.abs((a.y || 0) - (b.y || 0)) > 0.01 ||
+          (a.path?.length || 0) !== (b.path?.length || 0)
+        ) {
+          return incoming;
+        }
+      }
+      return prev;
+    });
+  }, []);
+
+  const updateMessagesDedup = useCallback((incoming) => {
+    if (!Array.isArray(incoming)) return;
+    setMessages((prev) => {
+      if (prev.length === incoming.length) {
+        if (prev.length === 0) return prev;
+        const pLast = prev[prev.length - 1];
+        const nLast = incoming[incoming.length - 1];
+        if (
+          pLast?.id === nLast?.id &&
+          (pLast?.text || "").length === (nLast?.text || "").length &&
+          prev[0]?.id === incoming[0]?.id
+        ) {
+          return prev;
+        }
+      }
+      return incoming;
+    });
+  }, []);
+
+  const handleChatScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distFromBottom <= 95;
+    isNearBottomRef.current = nearBottom;
+    savedScrollTopRef.current = el.scrollTop;
+    if (nearBottom) {
+      setUnreadCount((c) => (c !== 0 ? 0 : c));
+    }
+  }, []);
+
+  const scrollToLatestMessages = useCallback((smooth = true) => {
+    const el = chatListRef.current;
+    isNearBottomRef.current = true;
+    setUnreadCount(0);
+    if (el) {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: smooth ? "smooth" : "auto",
+      });
+    } else {
+      chatEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
+    }
+  }, []);
 
   // Ensure all 7 agents are represented even if backend is in transition
   const displayAgents = useMemo(() => {
@@ -378,16 +457,16 @@ export default function App() {
 
     const applySnapshot = (data) => {
       if (!data) return;
-      if (data.agents) setAgents(data.agents);
-      if (data.messages) setMessages(data.messages);
+      if (data.agents) updateAgentsDedup(data.agents);
+      if (data.messages) updateMessagesDedup(data.messages);
       if (typeof data.economy_mode === "boolean") setEconomyMode(data.economy_mode);
       if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
       if (data.providers) setProviders(data.providers);
-      if (data.current_dag) setCurrentDag(data.current_dag);
+      if (data.current_dag !== undefined) setCurrentDag(data.current_dag);
       if (data.quotas) setQuotas(data.quotas);
-      if (data.files) setFiles(data.files);
-      if (data.logs) setLogs(data.logs);
-      if (data.decisions) setDecisions(data.decisions);
+      if (data.files) setFiles((prev) => (prev.length === data.files.length ? prev : data.files));
+      if (data.logs) setLogs((prev) => (prev.length === data.logs.length ? prev : data.logs));
+      if (data.decisions) setDecisions((prev) => (prev.length === data.decisions.length ? prev : data.decisions));
       if (data.pending_approval !== undefined) setPendingApproval(data.pending_approval);
       setConnected(true);
     };
@@ -413,7 +492,7 @@ export default function App() {
           if (data.type === "state") {
             applySnapshot(data);
           } else if (data.type === "positions") {
-            setAgents(data.agents || []);
+            updateAgentsDedup(data.agents || []);
             if (typeof data.task_running === "boolean") setTaskRunning(data.task_running);
             if (data.current_dag) setCurrentDag(data.current_dag);
           } else if (data.type === "message") {
@@ -492,8 +571,47 @@ export default function App() {
   const resultCount = useMemo(() => messages.filter((m) => m.type === "result").length, [messages]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [filteredMessages, thinkingAgents.length]);
+    const prev = prevFilteredInfoRef.current;
+    const count = filteredMessages.length;
+    const lastMsg = count > 0 ? filteredMessages[count - 1] : null;
+    const lastId = lastMsg?.id || "";
+    const lastLen = (lastMsg?.text || "").length;
+
+    const filterChanged = prev.filter !== chatFilter;
+    const hasNewMsg = count > prev.count || (lastId && lastId !== prev.lastId);
+    const isStreamingUpdate = lastId && lastId === prev.lastId && lastLen !== prev.lastLen;
+
+    prevFilteredInfoRef.current = { count, lastId, lastLen, filter: chatFilter };
+
+    if (filterChanged) {
+      if (isNearBottomRef.current) {
+        scrollToLatestMessages(false);
+      }
+      return;
+    }
+
+    if (!hasNewMsg && !isStreamingUpdate) return;
+
+    // Auto-scroll ONLY when a new response/token arrives AND user is near bottom (or user just submitted)
+    const isUserAuthored = lastMsg?.sender_id === "user";
+    if (isNearBottomRef.current || isUserAuthored) {
+      scrollToLatestMessages(hasNewMsg && !isStreamingUpdate);
+    } else if (hasNewMsg) {
+      const added = Math.max(1, count - prev.count);
+      setUnreadCount((c) => c + added);
+    }
+  }, [filteredMessages, chatFilter, scrollToLatestMessages]);
+
+  // Preserve scroll position when returning to the 3D Office tab
+  useEffect(() => {
+    if (activeTab === "office" && chatListRef.current) {
+      if (isNearBottomRef.current) {
+        chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
+      } else {
+        chatListRef.current.scrollTop = savedScrollTopRef.current;
+      }
+    }
+  }, [activeTab]);
 
   const refreshState = () => {
     fetch(`${API_BASE}/api/state`)
@@ -501,16 +619,19 @@ export default function App() {
       .then((d) => {
         if (d) {
           setConnected(true);
-          if (d.agents) setAgents(d.agents);
-          if (d.messages) setMessages(d.messages);
+          if (d.agents) updateAgentsDedup(d.agents);
+          if (d.messages) updateMessagesDedup(d.messages);
           if (typeof d.economy_mode === "boolean") setEconomyMode(d.economy_mode);
           if (typeof d.task_running === "boolean") setTaskRunning(d.task_running);
           if (d.providers) setProviders(d.providers);
           if (d.current_dag !== undefined) setCurrentDag(d.current_dag);
           if (d.quotas) setQuotas(d.quotas);
-          if (d.files || (d.memory && d.memory.files)) setMemoryFiles(d.files || d.memory.files);
-          if (d.logs || (d.memory && d.memory.logs)) setLogs(d.logs || d.memory.logs);
-          if (d.decisions || (d.memory && d.memory.decisions)) setDecisions(d.decisions || d.memory.decisions);
+          const nextFiles = d.files || (d.memory && d.memory.files);
+          if (nextFiles) setFiles((prev) => (prev.length === nextFiles.length ? prev : nextFiles));
+          const nextLogs = d.logs || (d.memory && d.memory.logs);
+          if (nextLogs) setLogs((prev) => (prev.length === nextLogs.length ? prev : nextLogs));
+          const nextDec = d.decisions || (d.memory && d.memory.decisions);
+          if (nextDec) setDecisions((prev) => (prev.length === nextDec.length ? prev : nextDec));
           if (d.pending_approval !== undefined) setPendingApproval(d.pending_approval);
         }
       })
@@ -701,9 +822,9 @@ export default function App() {
       {/* Main Area: 3D Office OR CommandDashboard */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
         {activeTab === "office" ? (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 390px", width: "100%", height: "100%" }}>
+          <div className="office-split-layout" style={{ display: "grid", gridTemplateColumns: "1fr 390px", width: "100%", height: "100%" }}>
             {/* Left: 3D Office Viewport */}
-            <div style={{ position: "relative", width: "100%", height: "100%" }}>
+            <div className="office-viewport" style={{ position: "relative", width: "100%", height: "100%", minHeight: 0 }}>
               <OfficeScene
                 agents={displayAgents}
                 taskRunning={taskRunning}
@@ -901,12 +1022,14 @@ export default function App() {
 
             {/* Right Sidebar: Live Agent Comms */}
             <div
+              className="office-chat-sidebar"
               style={{
                 background: "#0b1120",
                 borderLeft: "1px solid rgba(148, 163, 184, 0.16)",
                 display: "flex",
                 flexDirection: "column",
                 height: "100%",
+                minHeight: 0,
                 overflow: "hidden",
               }}
             >
@@ -970,64 +1093,91 @@ export default function App() {
               </div>
 
               {/* Live Messages List */}
-              <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-                {messages.length === 0 && (
-                  <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-                    Ожидаем подключения к офису…
-                  </div>
-                )}
-                {messages.length > 0 && filteredMessages.length === 0 && (
-                  <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-                    {chatFilter === "results" ? "Итоговых результатов пока нет." : "Нет сообщений по этому фильтру."}
-                  </div>
-                )}
-                {filteredMessages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`chat-msg${m.type === "result" ? " result" : ""}`}
-                    style={{
-                      background: m.type === "result" ? "rgba(14, 165, 233, 0.1)" : "#0f172a",
-                      border: `1px solid ${m.type === "result" ? "rgba(56,189,248,0.4)" : "rgba(148,163,184,0.12)"}`,
-                      borderRadius: 10,
-                      padding: "9px 11px",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: m.color }}>
-                        <span>{m.sender_name}</span>
-                        <span style={{ color: "#64748b", fontWeight: 400, fontSize: 10 }}>{m.role}</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ fontSize: 10, color: "#475569" }}>{m.ts}</span>
-                        <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(m.text);
-                            setCopiedId(m.id);
-                            setTimeout(() => setCopiedId(null), 1500);
-                          }}
-                          title="Копировать"
-                          style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
-                        >
-                          {copiedId === m.id ? <Check size={12} color="#22c55e" /> : <Copy size={12} />}
-                        </button>
-                      </div>
+              <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                <div
+                  ref={chatListRef}
+                  onScroll={handleChatScroll}
+                  className="chat-messages-scroll"
+                  style={{
+                    flex: 1,
+                    overflowY: "auto",
+                    overflowAnchor: "none",
+                    padding: 12,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  {messages.length === 0 && (
+                    <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
+                      Ожидаем подключения к офису…
                     </div>
-                    <RichText text={m.text} />
-                    {m.model && (
-                      <div style={{ fontSize: 10, color: "#64748b", marginTop: 5 }}>
-                        Модель: {m.model}
+                  )}
+                  {messages.length > 0 && filteredMessages.length === 0 && (
+                    <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
+                      {chatFilter === "results" ? "Итоговых результатов пока нет." : "Нет сообщений по этому фильтру."}
+                    </div>
+                  )}
+                  {filteredMessages.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`chat-msg${m.type === "result" ? " result" : ""}`}
+                      style={{
+                        background: m.type === "result" ? "rgba(14, 165, 233, 0.1)" : "#0f172a",
+                        border: `1px solid ${m.type === "result" ? "rgba(56,189,248,0.4)" : "rgba(148,163,184,0.12)"}`,
+                        borderRadius: 10,
+                        padding: "9px 11px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: m.color }}>
+                          <span>{m.sender_name}</span>
+                          <span style={{ color: "#64748b", fontWeight: 400, fontSize: 10 }}>{m.role}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 10, color: "#475569" }}>{m.ts}</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(m.text);
+                              setCopiedId(m.id);
+                              setTimeout(() => setCopiedId(null), 1500);
+                            }}
+                            title="Копировать"
+                            style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}
+                          >
+                            {copiedId === m.id ? <Check size={12} color="#22c55e" /> : <Copy size={12} />}
+                          </button>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
-                {thinkingAgents.map((a) => (
-                  <div key={`typing-${a.id}`} className="typing-row" style={{ "--agent-color": a.color }}>
-                    <span style={{ color: a.color, fontWeight: 700 }}>{a.name}</span>
-                    <span style={{ color: "#94a3b8" }}>{a.status === "meeting" ? "обсуждает" : "печатает"}</span>
-                    <TypingDots />
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
+                      <RichText text={m.text} />
+                      {m.model && (
+                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 5 }}>
+                          Модель: {m.model}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {thinkingAgents.map((a) => (
+                    <div key={`typing-${a.id}`} className="typing-row" style={{ "--agent-color": a.color }}>
+                      <span style={{ color: a.color, fontWeight: 700 }}>{a.name}</span>
+                      <span style={{ color: "#94a3b8" }}>{a.status === "meeting" ? "обсуждает" : "печатает"}</span>
+                      <TypingDots />
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {unreadCount > 0 && (
+                  <button
+                    type="button"
+                    className="new-messages-pill"
+                    onClick={() => scrollToLatestMessages(true)}
+                    title="Перейти к новым сообщениям"
+                  >
+                    <span>Новые сообщения ({unreadCount})</span>
+                    <ArrowDown size={13} />
+                  </button>
+                )}
               </div>
             </div>
           </div>

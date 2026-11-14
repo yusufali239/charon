@@ -21,6 +21,19 @@ const CHAR_GEO = {
   hand: new THREE.SphereGeometry(0.042, 8, 8),
 };
 
+/* ---------- Shared character materials (zero per-frame material allocation) ---------- */
+const CHAR_MAT = {
+  pelvis: new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.6 }),
+  thigh: new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.65 }),
+  shin: new THREE.MeshStandardMaterial({ color: "#273449", roughness: 0.6 }),
+  shoe: new THREE.MeshStandardMaterial({ color: "#0f172a", roughness: 0.45 }),
+  chestPlate: new THREE.MeshStandardMaterial({ color: "#1e293b", roughness: 0.45, metalness: 0.3 }),
+  upperArm: new THREE.MeshStandardMaterial({ color: "#334155", roughness: 0.5 }),
+  forearm: new THREE.MeshStandardMaterial({ color: "#cbd5e1", roughness: 0.45 }),
+  hand: new THREE.MeshStandardMaterial({ color: "#e2e8f0", roughness: 0.4 }),
+  head: new THREE.MeshStandardMaterial({ color: "#f1f5f9", roughness: 0.35 }),
+};
+
 const DESK_BY_ID = Object.fromEntries(DESKS.map((d) => [d.id, d]));
 
 const STATE_META = {
@@ -301,10 +314,17 @@ function AgentTrail({ color, targetRef }) {
       trail.userData.init = true;
     }
     trail.userData.acc += delta;
-    if (trail.userData.acc < 0.045) return;
+    if (trail.userData.acc < 0.04) return;
     trail.userData.acc = 0;
-    arr.copyWithin(0, 3);
     const h = (TRAIL_N - 1) * 3;
+    const tailDist = Math.hypot(arr[0] - g.position.x, arr[2] - g.position.z);
+    const headDist = Math.hypot(arr[h] - g.position.x, arr[h + 2] - g.position.z);
+    if (tailDist < 0.004 && headDist < 0.004) {
+      trail.visible = false;
+      return;
+    }
+    trail.visible = true;
+    arr.copyWithin(0, 3);
     arr[h] = g.position.x;
     arr[h + 1] = 0.03;
     arr[h + 2] = g.position.z;
@@ -390,6 +410,20 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
   const pulseRef = useRef();
   const alertBeaconRef = useRef();
   const sitBlendRef = useRef(0);
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
+
+  const kinematicsRef = useRef({
+    initialized: false,
+    velX: 0,
+    velZ: 0,
+    speed: 0,
+    walkBlend: 0,
+    stridePhase: Math.random() * Math.PI * 2,
+    steerX: 0,
+    steerZ: 0,
+    waypoints: [],
+  });
 
   const auraMat = useMemo(() => additive(agent.color, 0.0), [agent.color]);
   const pulseMat = useMemo(() => additive(agent.color, 0.0), [agent.color]);
@@ -406,6 +440,48 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
     const [dx, , dz] = toWorld(desk.gx, desk.gy);
     return { x: dx + 0.72 * desk.facing, z: dz, faceAngle: desk.facing > 0 ? -Math.PI / 2 : Math.PI / 2 };
   }, [desk]);
+
+  // Synchronize incoming server path / target into smooth world-space waypoints
+  useEffect(() => {
+    const kin = kinematicsRef.current;
+    const g = groupRef.current;
+    const curX = g ? g.position.x : rawTx;
+    const curZ = g ? g.position.z : rawTz;
+    const rs = (agent.status || "idle").toLowerCase();
+
+    const pts = [];
+    if (Array.isArray(agent.path) && agent.path.length > 0) {
+      for (const step of agent.path) {
+        if (Array.isArray(step) && step.length >= 2) {
+          const [wx, , wz] = toWorld(step[0], step[1]);
+          pts.push({ x: wx, z: wz });
+        }
+      }
+    } else {
+      pts.push({ x: rawTx, z: rawTz });
+    }
+
+    // If final goal is near agent's desk chair and not in meeting/collab, snap final waypoint to chair
+    if (deskChairPos && rs !== "meeting" && !agent.collaborating_with && pts.length > 0) {
+      const lastPt = pts[pts.length - 1];
+      if (Math.hypot(lastPt.x - deskChairPos.x, lastPt.z - deskChairPos.z) < 1.15) {
+        pts[pts.length - 1] = { x: deskChairPos.x, z: deskChairPos.z };
+      }
+    }
+
+    // Prune waypoints already behind or right under the avatar so server updates never pull backward
+    while (pts.length > 1) {
+      const d0 = Math.hypot(pts[0].x - curX, pts[0].z - curZ);
+      const d1 = Math.hypot(pts[1].x - curX, pts[1].z - curZ);
+      if (d0 < 0.36 || d1 < d0) {
+        pts.shift();
+      } else {
+        break;
+      }
+    }
+
+    kin.waypoints = pts;
+  }, [agent.x, agent.y, agent.target_x, agent.target_y, agent.status, agent.collaborating_with, agent.path, rawTx, rawTz, deskChairPos]);
 
   const visualState = resolveAgentVisualState(agent);
   const stateMeta = STATE_META[visualState] || STATE_META.IDLE;
@@ -432,105 +508,179 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
     const g = groupRef.current;
     if (!g) return;
 
+    const curAgent = agentRef.current;
+    const kin = kinematicsRef.current;
     const dt = Math.min(delta, 0.05);
     const t = state.clock.elapsedTime;
-    const vs = resolveAgentVisualState(agent);
-    const rs = (agent.status || "idle").toLowerCase();
+    const vs = resolveAgentVisualState(curAgent);
+    const rs = (curAgent.status || "idle").toLowerCase();
 
-    // Determine if agent is parked at their own desk chair
-    let targetX = rawTx;
-    let targetZ = rawTz;
+    if (!kin.initialized) {
+      g.position.x = rawTx;
+      g.position.z = rawTz;
+      if (typeof curAgent.facing === "number" && Number.isFinite(curAgent.facing)) {
+        g.rotation.y = curAgent.facing;
+      }
+      kin.initialized = true;
+    }
+
+    // Advance corner waypoints smoothly before coming to a stop at intermediate grid nodes
+    while (kin.waypoints.length > 1) {
+      const wp = kin.waypoints[0];
+      if (Math.hypot(wp.x - g.position.x, wp.z - g.position.z) < 0.38) {
+        kin.waypoints.shift();
+      } else {
+        break;
+      }
+    }
+
+    const activeWp = kin.waypoints[0] || { x: rawTx, z: rawTz };
+    const finalWp = kin.waypoints[kin.waypoints.length - 1] || activeWp;
+
+    let targetX = activeWp.x;
+    let targetZ = activeWp.z;
     let atDesk = false;
 
-    if (deskChairPos && rs !== "walking" && rs !== "meeting" && !agent.collaborating_with) {
-      const distDesk = Math.hypot(rawTx - deskChairPos.x, rawTz - deskChairPos.z);
-      if (distDesk < 1.15) {
+    if (deskChairPos && rs !== "meeting" && !curAgent.collaborating_with) {
+      const distFinalToChair = Math.hypot(finalWp.x - deskChairPos.x, finalWp.z - deskChairPos.z);
+      const distAvatarToChair = Math.hypot(g.position.x - deskChairPos.x, g.position.z - deskChairPos.z);
+      if (distFinalToChair < 1.15 && distAvatarToChair < 0.95 && kin.waypoints.length <= 1) {
         atDesk = true;
         targetX = deskChairPos.x;
         targetZ = deskChairPos.z;
       }
     }
 
-    // Subtle client-side separation if two standing/walking agents are too close
-    if (!atDesk) {
-      let sepX = 0;
-      let sepZ = 0;
-      const minSep = 0.88;
+    const toTargetX = targetX - g.position.x;
+    const toTargetZ = targetZ - g.position.z;
+    const distToWp = Math.hypot(toTargetX, toTargetZ);
+    const distToFinal =
+      kin.waypoints.length > 1
+        ? distToWp + Math.hypot(finalWp.x - targetX, finalWp.z - targetZ)
+        : distToWp;
+
+    // Smooth arrival deceleration & constant cruise speed across intermediate waypoints
+    const maxSpeed = 2.65;
+    const slowRadius = 0.85;
+    let desiredSpeed = 0;
+    if (distToFinal > 0.025) {
+      const ramp = Math.min(1, distToFinal / slowRadius);
+      // Ease-out curve for silky arrival
+      desiredSpeed = maxSpeed * (ramp * (2 - ramp));
+    }
+
+    let dirX = distToWp > 0.001 ? toTargetX / distToWp : 0;
+    let dirZ = distToWp > 0.001 ? toTargetZ / distToWp : 0;
+
+    // Smooth predictive collision avoidance ONLY while moving (prevents stationary jitter)
+    let rawSteerX = 0;
+    let rawSteerZ = 0;
+    if (!atDesk && desiredSpeed > 0.08) {
+      const minSep = 0.92;
       for (const [otherId, otherG] of Object.entries(avatarRefs.current)) {
-        if (otherId === agent.id || !otherG) continue;
+        if (otherId === curAgent.id || !otherG) continue;
         const ox = g.position.x - otherG.position.x;
         const oz = g.position.z - otherG.position.z;
         const d = Math.hypot(ox, oz);
         if (d > 0.001 && d < minSep) {
-          const push = ((minSep - d) / minSep) * 0.42;
-          sepX += (ox / d) * push;
-          sepZ += (oz / d) * push;
+          const repel = ((minSep - d) / minSep) * 1.15;
+          // Combine radial repulsion with slight right-hand tangential slide
+          const nx = ox / d;
+          const nz = oz / d;
+          rawSteerX += (nx - nz * 0.35) * repel;
+          rawSteerZ += (nz + nx * 0.35) * repel;
         }
       }
-      targetX += sepX;
-      targetZ += sepZ;
+    }
+    const steerBlend = 1 - Math.exp(-8 * dt);
+    kin.steerX = THREE.MathUtils.lerp(kin.steerX, rawSteerX, steerBlend);
+    kin.steerZ = THREE.MathUtils.lerp(kin.steerZ, rawSteerZ, steerBlend);
+
+    const desiredVelX = dirX * desiredSpeed + kin.steerX;
+    const desiredVelZ = dirZ * desiredSpeed + kin.steerZ;
+
+    // Smooth delta-time velocity damping (smooth acceleration and deceleration)
+    const accelRate = desiredSpeed > kin.speed ? 7.5 : 11.0;
+    const velBlend = 1 - Math.exp(-accelRate * dt);
+    kin.velX = THREE.MathUtils.lerp(kin.velX, desiredVelX, velBlend);
+    kin.velZ = THREE.MathUtils.lerp(kin.velZ, desiredVelZ, velBlend);
+
+    if (distToFinal < 0.025 && Math.hypot(kin.velX, kin.velZ) < 0.04) {
+      kin.velX = 0;
+      kin.velZ = 0;
+      g.position.x = THREE.MathUtils.lerp(g.position.x, targetX, Math.min(1, dt * 12));
+      g.position.z = THREE.MathUtils.lerp(g.position.z, targetZ, Math.min(1, dt * 12));
+    } else {
+      g.position.x += kin.velX * dt;
+      g.position.z += kin.velZ * dt;
     }
 
-    const dx = targetX - g.position.x;
-    const dz = targetZ - g.position.z;
-    const moveDist = Math.hypot(dx, dz);
+    const actualSpeed = Math.hypot(kin.velX, kin.velZ);
+    kin.speed = actualSpeed;
 
-    const k = Math.min(1, dt * 8.5);
-    g.position.x = THREE.MathUtils.lerp(g.position.x, targetX, k);
-    g.position.z = THREE.MathUtils.lerp(g.position.z, targetZ, k);
-
-    // Determine facing angle smoothly
+    // Smooth rotation towards movement velocity vector, or contextual target when parked
     let desiredRotY = g.rotation.y;
-    if (moveDist > 0.04) {
-      desiredRotY = Math.atan2(dx, dz);
+    if (actualSpeed > 0.09) {
+      desiredRotY = Math.atan2(kin.velX, kin.velZ);
     } else if (atDesk && deskChairPos) {
       desiredRotY = deskChairPos.faceAngle;
     } else if (rs === "meeting" || vs === "MEETING") {
       desiredRotY = Math.atan2(TABLE_POS.x - g.position.x, TABLE_POS.z - g.position.z);
-    } else if (agent.collaborating_with && avatarRefs.current[agent.collaborating_with]) {
-      const partner = avatarRefs.current[agent.collaborating_with];
+    } else if (curAgent.collaborating_with && avatarRefs.current[curAgent.collaborating_with]) {
+      const partner = avatarRefs.current[curAgent.collaborating_with];
       desiredRotY = Math.atan2(partner.position.x - g.position.x, partner.position.z - g.position.z);
-    } else if (typeof agent.facing === "number" && Number.isFinite(agent.facing)) {
-      desiredRotY = agent.facing;
+    } else if (typeof curAgent.facing === "number" && Number.isFinite(curAgent.facing)) {
+      desiredRotY = curAgent.facing;
     }
-    g.rotation.y += shortestAngleDiff(g.rotation.y, desiredRotY) * Math.min(1, dt * 10);
+    const rotBlend = 1 - Math.exp(-9.5 * dt);
+    g.rotation.y += shortestAngleDiff(g.rotation.y, desiredRotY) * rotBlend;
 
     // Pose blending: sitting vs walking vs meeting/inspecting/alert
-    const sittingGoal = atDesk && moveDist < 0.25 ? 1 : 0;
-    sitBlendRef.current = THREE.MathUtils.lerp(sitBlendRef.current, sittingGoal, Math.min(1, dt * 7));
+    const sittingGoal = atDesk && actualSpeed < 0.14 && distToFinal < 0.25 ? 1 : 0;
+    sitBlendRef.current = THREE.MathUtils.lerp(sitBlendRef.current, sittingGoal, 1 - Math.exp(-7.5 * dt));
     const sit = sitBlendRef.current;
 
-    const isWalking = rs === "walking" || vs === "WALKING" || moveDist > 0.14;
+    // Velocity-synchronized walking animation (zero moonwalking when stopped, zero pose snapping)
+    const walkTarget = actualSpeed > 0.05 ? THREE.MathUtils.clamp(actualSpeed / 1.9, 0.12, 1.0) : 0;
+    kin.walkBlend = THREE.MathUtils.lerp(kin.walkBlend, walkTarget, 1 - Math.exp(-10 * dt));
+    const wb = kin.walkBlend;
+    if (actualSpeed > 0.02) {
+      kin.stridePhase = (kin.stridePhase + actualSpeed * dt * 4.35) % (Math.PI * 2);
+    }
+
+    const isWalking = wb > 0.08;
     const isWorking = vs === "WORKING" || rs === "working";
     const isThinking = vs === "THINKING";
     const isReviewing = vs === "REVIEWING";
-    const isCollaborating = vs === "COLLABORATING" || Boolean(agent.collaborating_with);
+    const isCollaborating = vs === "COLLABORATING" || Boolean(curAgent.collaborating_with);
     const isMeeting = rs === "meeting" || vs === "MEETING";
     const isBlocked = vs === "BLOCKED";
     const isError = vs === "ERROR";
     const isCompleted = vs === "COMPLETED";
-    const swing = isWalking ? Math.sin(t * 10.5) * 0.58 : 0;
+
+    const swing = Math.sin(kin.stridePhase) * 0.56 * wb;
+    const kneeLiftL = Math.max(0, Math.cos(kin.stridePhase)) * 0.62 * wb;
+    const kneeLiftR = Math.max(0, -Math.cos(kin.stridePhase)) * 0.62 * wb;
 
     // Body height & lean
     if (bodyRef.current) {
-      const walkBob = isWalking ? Math.abs(Math.sin(t * 10.5)) * 0.045 : 0;
+      const walkBob = Math.abs(Math.sin(kin.stridePhase)) * 0.04 * wb;
       const alertJolt = isError ? Math.sin(t * 20) * 0.018 : isBlocked ? Math.sin(t * 5) * 0.01 : 0;
       bodyRef.current.position.y = THREE.MathUtils.lerp(walkBob, -0.075, sit);
-      bodyRef.current.rotation.x = isWalking ? 0.08 : isReviewing ? 0.12 : sit * 0.06;
-      bodyRef.current.rotation.z = alertJolt;
+      const forwardLean = wb * 0.085 + (1 - wb) * (isReviewing ? 0.12 : sit * 0.06);
+      bodyRef.current.rotation.x = forwardLean;
+      bodyRef.current.rotation.z = alertJolt - Math.cos(kin.stridePhase) * 0.022 * wb;
     }
 
     // Articulated Legs (hip + knee)
     if (leftHipRef.current && rightHipRef.current && leftKneeRef.current && rightKneeRef.current) {
       const walkHipL = -swing;
       const walkHipR = swing;
-      const walkKneeL = Math.max(0, swing * 0.65);
-      const walkKneeR = Math.max(0, -swing * 0.65);
 
       leftHipRef.current.rotation.x = THREE.MathUtils.lerp(walkHipL, -1.42, sit);
       rightHipRef.current.rotation.x = THREE.MathUtils.lerp(walkHipR, -1.42, sit);
-      leftKneeRef.current.rotation.x = THREE.MathUtils.lerp(walkKneeL, 1.42, sit);
-      rightKneeRef.current.rotation.x = THREE.MathUtils.lerp(walkKneeR, 1.42, sit);
+      leftKneeRef.current.rotation.x = THREE.MathUtils.lerp(kneeLiftL, 1.42, sit);
+      rightKneeRef.current.rotation.x = THREE.MathUtils.lerp(kneeLiftR, 1.42, sit);
     }
 
     // Articulated Arms (shoulder + elbow)
@@ -568,45 +718,45 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
         sitElR = -0.55;
       }
 
-      // Standing pose variants
+      // Standing pose variants (blended smoothly with walkBlend)
       const converseGesture = isMeeting || isCollaborating ? Math.sin(t * 3.6) * 0.18 : 0;
-      let standShL = Math.sin(t * 2) * 0.04;
-      let standShR = -Math.sin(t * 2) * 0.04;
-      let standElL = -0.12;
-      let standElR = -0.12;
+      let idleShL = Math.sin(t * 2) * 0.04;
+      let idleShR = -Math.sin(t * 2) * 0.04;
+      let idleElL = -0.12;
+      let idleElR = -0.12;
 
-      if (isWalking) {
-        standShL = swing * 0.85;
-        standShR = -swing * 0.85;
-        standElL = -0.28;
-        standElR = -0.28;
-      } else if (isMeeting || isCollaborating) {
-        standShL = -0.38 + converseGesture;
-        standShR = -0.26 - converseGesture;
-        standElL = -0.62;
-        standElR = -0.45;
+      if (isMeeting || isCollaborating) {
+        idleShL = -0.38 + converseGesture;
+        idleShR = -0.26 - converseGesture;
+        idleElL = -0.62;
+        idleElR = -0.45;
       } else if (isReviewing) {
-        standShL = -0.32;
-        standShR = -0.88;
-        standElL = -0.42;
-        standElR = -0.95 + Math.sin(t * 2.4) * 0.12;
+        idleShL = -0.32;
+        idleShR = -0.88;
+        idleElL = -0.42;
+        idleElR = -0.95 + Math.sin(t * 2.4) * 0.12;
       } else if (isThinking) {
-        standShR = -1.05;
-        standElR = -1.22 + Math.sin(t * 2.2) * 0.04;
-        standShL = -0.2;
-        standElL = -0.35;
+        idleShR = -1.05;
+        idleElR = -1.22 + Math.sin(t * 2.2) * 0.04;
+        idleShL = -0.2;
+        idleElL = -0.35;
       } else if (isError || isBlocked) {
         const pulseArm = Math.sin(t * (isError ? 12 : 5)) * 0.1;
-        standShL = -0.68 + pulseArm;
-        standShR = -0.68 - pulseArm;
-        standElL = -0.88;
-        standElR = -0.88;
+        idleShL = -0.68 + pulseArm;
+        idleShR = -0.68 - pulseArm;
+        idleElL = -0.88;
+        idleElR = -0.88;
       } else if (isCompleted) {
-        standShL = -0.22;
-        standShR = -0.22;
-        standElL = -0.3;
-        standElR = -0.3;
+        idleShL = -0.22;
+        idleShR = -0.22;
+        idleElL = -0.3;
+        idleElR = -0.3;
       }
+
+      const standShL = THREE.MathUtils.lerp(idleShL, swing * 0.85, wb);
+      const standShR = THREE.MathUtils.lerp(idleShR, -swing * 0.85, wb);
+      const standElL = THREE.MathUtils.lerp(idleElL, -0.28 - Math.max(0, -swing) * 0.22, wb);
+      const standElR = THREE.MathUtils.lerp(idleElR, -0.28 - Math.max(0, swing) * 0.22, wb);
 
       leftShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShL, sitShL, sit);
       rightShoulderRef.current.rotation.x = THREE.MathUtils.lerp(standShR, sitShR, sit);
@@ -729,37 +879,23 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
         {/* Articulated Character Body */}
         <group ref={bodyRef}>
           {/* Pelvis */}
-          <mesh geometry={CHAR_GEO.pelvis} position={[0, 0.53, 0]} castShadow>
-            <meshStandardMaterial color="#1e293b" roughness={0.6} />
-          </mesh>
+          <mesh geometry={CHAR_GEO.pelvis} material={CHAR_MAT.pelvis} position={[0, 0.53, 0]} />
 
           {/* Left Leg (Hip -> Thigh -> Knee -> Shin -> Shoe) */}
           <group ref={leftHipRef} position={[-0.095, 0.5, 0]}>
-            <mesh geometry={CHAR_GEO.thigh} position={[0, -0.12, 0]} castShadow>
-              <meshStandardMaterial color="#1e293b" roughness={0.65} />
-            </mesh>
+            <mesh geometry={CHAR_GEO.thigh} material={CHAR_MAT.thigh} position={[0, -0.12, 0]} castShadow />
             <group ref={leftKneeRef} position={[0, -0.24, 0]}>
-              <mesh geometry={CHAR_GEO.shin} position={[0, -0.12, 0]} castShadow>
-                <meshStandardMaterial color="#273449" roughness={0.6} />
-              </mesh>
-              <mesh geometry={CHAR_GEO.shoe} position={[0, -0.23, 0.035]} castShadow>
-                <meshStandardMaterial color="#0f172a" roughness={0.45} />
-              </mesh>
+              <mesh geometry={CHAR_GEO.shin} material={CHAR_MAT.shin} position={[0, -0.12, 0]} />
+              <mesh geometry={CHAR_GEO.shoe} material={CHAR_MAT.shoe} position={[0, -0.23, 0.035]} />
             </group>
           </group>
 
           {/* Right Leg */}
           <group ref={rightHipRef} position={[0.095, 0.5, 0]}>
-            <mesh geometry={CHAR_GEO.thigh} position={[0, -0.12, 0]} castShadow>
-              <meshStandardMaterial color="#1e293b" roughness={0.65} />
-            </mesh>
+            <mesh geometry={CHAR_GEO.thigh} material={CHAR_MAT.thigh} position={[0, -0.12, 0]} castShadow />
             <group ref={rightKneeRef} position={[0, -0.24, 0]}>
-              <mesh geometry={CHAR_GEO.shin} position={[0, -0.12, 0]} castShadow>
-                <meshStandardMaterial color="#273449" roughness={0.6} />
-              </mesh>
-              <mesh geometry={CHAR_GEO.shoe} position={[0, -0.23, 0.035]} castShadow>
-                <meshStandardMaterial color="#0f172a" roughness={0.45} />
-              </mesh>
+              <mesh geometry={CHAR_GEO.shin} material={CHAR_MAT.shin} position={[0, -0.12, 0]} />
+              <mesh geometry={CHAR_GEO.shoe} material={CHAR_MAT.shoe} position={[0, -0.23, 0.035]} />
             </group>
           </group>
 
@@ -773,9 +909,7 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
               emissiveIntensity={selected ? 0.32 : 0.08}
             />
           </mesh>
-          <mesh geometry={CHAR_GEO.chestPlate} position={[0, 0.82, 0.03]} castShadow>
-            <meshStandardMaterial color="#1e293b" roughness={0.45} metalness={0.3} />
-          </mesh>
+          <mesh geometry={CHAR_GEO.chestPlate} material={CHAR_MAT.chestPlate} position={[0, 0.82, 0.03]} />
           {/* Glowing chest badge */}
           <mesh position={[0.06, 0.86, 0.13]}>
             <boxGeometry args={[0.07, 0.025, 0.015]} />
@@ -784,16 +918,10 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
 
           {/* Left Arm (Shoulder -> Upper Arm -> Elbow -> Forearm -> Hand) */}
           <group ref={leftShoulderRef} position={[-0.23, 0.96, 0]}>
-            <mesh geometry={CHAR_GEO.upperArm} position={[0, -0.11, 0]} castShadow>
-              <meshStandardMaterial color="#334155" roughness={0.5} />
-            </mesh>
+            <mesh geometry={CHAR_GEO.upperArm} material={CHAR_MAT.upperArm} position={[0, -0.11, 0]} />
             <group ref={leftElbowRef} position={[0, -0.21, 0]}>
-              <mesh geometry={CHAR_GEO.forearm} position={[0, -0.1, 0]} castShadow>
-                <meshStandardMaterial color="#cbd5e1" roughness={0.45} />
-              </mesh>
-              <mesh geometry={CHAR_GEO.hand} position={[0, -0.2, 0]} castShadow>
-                <meshStandardMaterial color="#e2e8f0" roughness={0.4} />
-              </mesh>
+              <mesh geometry={CHAR_GEO.forearm} material={CHAR_MAT.forearm} position={[0, -0.1, 0]} />
+              <mesh geometry={CHAR_GEO.hand} material={CHAR_MAT.hand} position={[0, -0.2, 0]} />
               {agent.id === "lead" && (
                 <mesh position={[0, -0.12, 0.045]}>
                   <boxGeometry args={[0.05, 0.08, 0.015]} />
@@ -805,16 +933,10 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
 
           {/* Right Arm */}
           <group ref={rightShoulderRef} position={[0.23, 0.96, 0]}>
-            <mesh geometry={CHAR_GEO.upperArm} position={[0, -0.11, 0]} castShadow>
-              <meshStandardMaterial color="#334155" roughness={0.5} />
-            </mesh>
+            <mesh geometry={CHAR_GEO.upperArm} material={CHAR_MAT.upperArm} position={[0, -0.11, 0]} />
             <group ref={rightElbowRef} position={[0, -0.21, 0]}>
-              <mesh geometry={CHAR_GEO.forearm} position={[0, -0.1, 0]} castShadow>
-                <meshStandardMaterial color="#cbd5e1" roughness={0.45} />
-              </mesh>
-              <mesh geometry={CHAR_GEO.hand} position={[0, -0.2, 0]} castShadow>
-                <meshStandardMaterial color="#e2e8f0" roughness={0.4} />
-              </mesh>
+              <mesh geometry={CHAR_GEO.forearm} material={CHAR_MAT.forearm} position={[0, -0.1, 0]} />
+              <mesh geometry={CHAR_GEO.hand} material={CHAR_MAT.hand} position={[0, -0.2, 0]} />
               {agent.id === "growth" && (
                 <mesh position={[0, -0.21, 0.05]} rotation={[0.4, 0, 0]}>
                   <boxGeometry args={[0.08, 0.11, 0.015]} />
@@ -826,9 +948,7 @@ export function AgentAvatar({ agent, selected, onSelect, avatarRefs }) {
 
           {/* Head + Glowing Visor + Role Accessories */}
           <group ref={headRef}>
-            <mesh geometry={CHAR_GEO.head} position={[0, 1.24, 0]} castShadow>
-              <meshStandardMaterial color="#f1f5f9" roughness={0.35} />
-            </mesh>
+            <mesh geometry={CHAR_GEO.head} material={CHAR_MAT.head} position={[0, 1.24, 0]} castShadow />
             <mesh geometry={CHAR_GEO.visor} position={[0, 1.25, 0.135]}>
               <meshBasicMaterial color={agent.color} />
             </mesh>

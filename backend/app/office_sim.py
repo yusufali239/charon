@@ -117,20 +117,26 @@ def astar(
             return path
 
         cx, cy = current
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        for dx, dy, base_cost in (
+            (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
+            (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414),
+        ):
             nx, ny = cx + dx, cy + dy
             if not (0 <= nx < GRID_W and 0 <= ny < GRID_H):
                 continue
+            if dx != 0 and dy != 0:
+                if (cx + dx, cy) in BLOCKED_CELLS or (cx, cy + dy) in BLOCKED_CELLS:
+                    continue
             nxt = (nx, ny)
             if nxt != goal and (nxt in BLOCKED_CELLS or nxt in extra):
                 continue
             # Prefer walking through the main office floor rather than behind desks/walls
-            step_cost = 3 if (nx in (0, GRID_W - 1) or ny in (0, GRID_H - 1)) else 1
+            step_cost = base_cost + (1.5 if (nx in (0, GRID_W - 1) or ny in (0, GRID_H - 1)) else 0.0)
             tentative_g = g_score[current] + step_cost
             if tentative_g < g_score.get(nxt, 10**9):
                 came_from[nxt] = current
                 g_score[nxt] = tentative_g
-                h = abs(goal[0] - nx) + abs(goal[1] - ny)
+                h = math.hypot(goal[0] - nx, goal[1] - ny)
                 counter += 1
                 heapq.heappush(open_heap, (tentative_g + h, counter, nxt))
     return []
@@ -189,6 +195,9 @@ class AgentState:
             "model": self.profile.model,
             "x": round(self.x, 3),
             "y": round(self.y, 3),
+            "target_x": self.target_x,
+            "target_y": self.target_y,
+            "path": [[px, py] for px, py in self.path[:16]],
             "facing": round(self.facing, 3),
             "status": self.status,
             "visual_state": vs,
